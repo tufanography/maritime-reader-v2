@@ -1,0 +1,30 @@
+---
+import type { Article } from '@/lib/repository/types';
+import { slugify } from '@/lib/slug';
+
+interface Props {
+  articles: Article[];
+  emptyMessage?: string;
+}
+const { articles, emptyMessage = 'No articles yet.' } = Astro.props;
+---
+{articles.length === 0 ? (
+  <p class="muted">{emptyMessage}</p>
+) : (
+  <ul style="list-style:none;padding:0;margin:0;">
+    {articles.map((a) => (
+      <li style="padding:16px 0;border-bottom:1px solid #1a2238;">
+        <a href={`/article/${a.id}/`} style="font-size:17px;font-weight:600;line-height:1.3;">
+          {a.title}
+        </a>
+        <div class="muted" style="font-size:13px;margin-top:6px;">
+          {a.sourceName && (
+            <a href={`/source/${slugify(a.sourceName)}/`} style="color:inherit;">{a.sourceName}</a>
+          )}
+          {a.publishedAt && <span> · {a.publishedAt.slice(0,10)}</span>}
+          {a.documentType && <span> · {a.documentType}</span>}
+        </div>
+      </li>
+    ))}
+  </ul>
+)}

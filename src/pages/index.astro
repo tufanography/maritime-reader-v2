@@ -1,0 +1,27 @@
+---
+// Homepage = page 1 of the feed. Slice 3 (2026-05-31) replaced slice 2's
+// broken `?page=N` query-param pagination (a prerendered static page never
+// sees query params, so every page rendered page 1) with REAL static
+// routes: `/` is page 1 here, pages 2..N are emitted by src/pages/page/
+// [n].astro via getStaticPaths. No request-time DB, no SSR — fully static,
+// per Hard Constraint #4. Shared markup lives in ArticleFeed.astro.
+
+import ArticleFeed from '@/components/ArticleFeed.astro';
+import { articleRepo } from '@/lib/repository/SupabaseArticleRepository';
+
+const PAGE_SIZE = 20;
+// Pagination depth cap. We have ~49.5k visible articles (2,479 raw pages),
+// but nobody clicks to page 2,400 — deep archive is reached via search
+// (Pagefind) + segment/theme/source filters, not sequential paging. Cap
+// the navigable window at the most recent 100 pages (2,000 articles) so
+// the static build stays fast (100 slice queries, not 2,478) and the user
+// is steered to the right tool for old content. The count badge still
+// shows the REAL total (49.5k); only the page window is capped.
+const MAX_PAGES = 100;
+const [articles, total] = await Promise.all([
+  articleRepo.listVisiblePage(0, PAGE_SIZE),
+  articleRepo.countVisible(),
+]);
+const totalPages = Math.min(MAX_PAGES, Math.max(1, Math.ceil(total / PAGE_SIZE)));
+---
+<ArticleFeed articles={articles} page={1} totalPages={totalPages} total={total} />

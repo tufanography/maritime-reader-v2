@@ -1,0 +1,20 @@
+---
+import FilterFeed from '@/components/FilterFeed.astro';
+import { articleRepo } from '@/lib/repository/SupabaseArticleRepository';
+import { THEMES, THEME_LABEL, type Theme } from '@/lib/taxonomy';
+
+export async function getStaticPaths() {
+  return THEMES.map((theme) => ({ params: { theme } }));
+}
+
+const { theme } = Astro.params as { theme: Theme };
+const articles = await articleRepo.listByTheme(theme, 100);
+const label = THEME_LABEL[theme];
+---
+<FilterFeed
+  articles={articles}
+  kicker="Theme"
+  title={label}
+  subtitle={`${articles.length} visible articles tagged ${label}.`}
+  emptyMessage={`No visible articles tagged ${label} yet.`}
+/>

@@ -1,0 +1,102 @@
+---
+// Filter chip bar — Segments / Types / Themes rows + an Advanced row.
+//
+// SLICE 2a (2026-06): the chips are now CLICKABLE LINKS to the static
+// filter pages (/segment/X, /type/X, /theme/X). "All" clears that
+// dimension (→ home). The active chip is highlighted from the current
+// URL. This is single-dimension filtering (one facet at a time) — the
+// static, zero-JS, zero-DB-at-runtime equivalent of v1's filter bar.
+//
+// Vocabulary is imported from the canonical taxonomy so the chip set can
+// NEVER drift from the filter routes (no more hardcoded list that forgets
+// press_release or invents a 'general' segment with no page).
+//
+// SLICE 2b (next, build-verified): multi-facet COMBINATIONS + keyword +
+// date via Pagefind faceting (data-pagefind-filter is already emitted on
+// every article page). The "Advanced filters" row below stays a skeleton
+// until then.
+
+import { SEGMENTS, SEGMENT_LABEL, THEMES, THEME_LABEL, DOC_TYPES, DOC_TYPE_LABEL } from '@/lib/taxonomy';
+
+const path = Astro.url.pathname;
+
+type Chip = { value: string; label: string; href: string };
+const allChip = (): Chip => ({ value: 'all', label: 'All', href: '/' });
+
+const segmentChips: Chip[] = [allChip(), ...SEGMENTS.map((v) => ({ value: v, label: SEGMENT_LABEL[v], href: `/segment/${v}/` }))];
+const typeChips: Chip[]    = [allChip(), ...DOC_TYPES.map((v) => ({ value: v, label: DOC_TYPE_LABEL[v], href: `/type/${v}/` }))];
+const themeChips: Chip[]   = [allChip(), ...THEMES.map((v) => ({ value: v, label: THEME_LABEL[v], href: `/theme/${v}/` }))];
+
+// A chip is active when the current path is its filter page. The per-row
+// "All" chip is active when the path is NOT under that dimension's prefix
+// (so on the homepage every row shows "All"; on /segment/tanker the
+// Segments row shows "Tanker" and the other rows show "All").
+function isActive(prefix: string, value: string): boolean {
+  if (value === 'all') return !path.startsWith(prefix);
+  return path === `${prefix}${value}/` || path === `${prefix}${value}`;
+}
+const chipBase = 'shrink-0 inline-flex items-center px-3 py-1 rounded-full border text-xs font-medium transition';
+const chipOn = 'bg-slate-900 text-white border-slate-900';
+const chipOff = 'bg-white text-slate-700 border-slate-300 hover:border-slate-400';
+---
+<section class="border-b border-slate-200 bg-white">
+  <div class="max-w-7xl mx-auto px-4 py-3 space-y-2">
+
+    {/* Segments */}
+    <div class="flex flex-col sm:flex-row sm:items-start gap-1 sm:gap-3">
+      <div class="text-xs font-bold uppercase tracking-wide text-slate-700 sm:w-36 shrink-0 sm:pt-1.5">Segments</div>
+      <div class="flex items-center flex-wrap gap-2 flex-1 min-w-0">
+        {segmentChips.map((c) => (
+          <a href={c.href} class:list={[chipBase, isActive('/segment/', c.value) ? chipOn : chipOff]}>{c.label}</a>
+        ))}
+      </div>
+    </div>
+
+    {/* Types */}
+    <div class="flex flex-col sm:flex-row sm:items-start gap-1 sm:gap-3">
+      <div class="text-xs font-bold uppercase tracking-wide text-slate-700 sm:w-36 shrink-0 sm:pt-1.5">Types</div>
+      <div class="flex items-center flex-wrap gap-2 flex-1 min-w-0">
+        {typeChips.map((c) => (
+          <a href={c.href} class:list={[chipBase, isActive('/type/', c.value) ? chipOn : chipOff]}>{c.label}</a>
+        ))}
+      </div>
+    </div>
+
+    {/* Themes */}
+    <div class="flex flex-col sm:flex-row sm:items-start gap-1 sm:gap-3">
+      <div class="text-xs font-bold uppercase tracking-wide text-slate-700 sm:w-36 shrink-0 sm:pt-1.5">Themes</div>
+      <div class="flex items-center flex-wrap gap-2 flex-1 min-w-0">
+        {themeChips.map((c) => (
+          <a href={c.href} class:list={[chipBase, isActive('/theme/', c.value) ? chipOn : chipOff]}>{c.label}</a>
+        ))}
+      </div>
+    </div>
+
+    {/* Advanced filters — SKELETON until slice 2b (Pagefind faceted
+        multi-filter + keyword + date). Non-interactive stand-ins so the
+        layout shape is honest. */}
+    <div class="flex flex-col sm:flex-row sm:items-start gap-1 sm:gap-3">
+      <div class="text-xs font-bold uppercase tracking-wide text-slate-700 sm:w-36 shrink-0 sm:pt-1.5">Advanced filters</div>
+      <div class="flex items-center flex-wrap gap-3 sm:pl-[52px] flex-1 min-w-0">
+        <span class="inline-flex items-center gap-2 px-3 py-1.5 rounded-md border border-slate-300 bg-white text-xs text-slate-500">
+          <span class="font-semibold text-slate-700">Keywords</span>
+          <span class="text-slate-400">|</span>
+          <span>type to search…</span>
+        </span>
+        <span class="inline-flex items-center gap-2 px-3 py-1.5 rounded-md border border-slate-300 bg-white text-xs text-slate-700">
+          Date: <span class="font-medium">All time</span>
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M6 9l6 6 6-6"/></svg>
+        </span>
+        <span class="inline-flex items-center gap-2 px-3 py-1.5 rounded-md border border-slate-300 bg-white text-xs text-slate-700">
+          Sources: <span class="font-medium">All</span>
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M6 9l6 6 6-6"/></svg>
+        </span>
+        <span class="inline-flex items-center gap-2 px-3 py-1.5 rounded-md border border-slate-300 bg-white text-xs text-slate-700">
+          Topics: <span class="font-medium">All</span>
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M6 9l6 6 6-6"/></svg>
+        </span>
+      </div>
+    </div>
+
+  </div>
+</section>

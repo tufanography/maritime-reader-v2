@@ -1,0 +1,40 @@
+# BASE (full archive) deploy — weekly.
+# Rebuilds the WHOLE static site + the full `_pagefind` search index (all ~51k
+# articles). This is the one heavy Supabase Nano read (the documented "≤1 full
+# build/day" Disk-IO budget — weekly is comfortably under it) and it folds the
+# accumulated delta articles into the base so the delta stays small. Upload is
+# INCREMENTAL (manifest in R2) so even this full build pushes only what actually
+# changed since the last base build (~a week of new articles + the small index
+# files) → still ~free on R2.
+name: deploy-base
+on:
+  schedule:
+    - cron: '0 4 * * 0'    # Sundays 04:00 UTC
+  workflow_dispatch:        # manual run button
+# Serialize with deploy-delta so the two never race the R2 manifest.
+concurrency:
+  group: maritime-r2-deploy
+  cancel-in-progress: false
+jobs:
+  deploy-base:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Full build + base Pagefind index (full DB read)
+        run: npm run build   # runs postbuild → pagefind --site dist (base _pagefind)
+        env:
+          # unset ARTICLE_PAGE_LIMIT → defaults to 60000 (whole visible archive)
+          PUBLIC_SUPABASE_URL: ${{ secrets.PUBLIC_SUPABASE_URL }}
+          PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.PUBLIC_SUPABASE_ANON_KEY }}
+      - name: Incremental upload (full scope — base + site)
+        run: npm run deploy:r2
+        env:
+          DEPLOY_MODE: full
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}

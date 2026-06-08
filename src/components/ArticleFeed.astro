@@ -1,0 +1,134 @@
+---
+// Shared homepage feed body — slice 3 (2026-05-31). Extracted from
+// index.astro so the home route (`/`, page 1) and the static page routes
+// (`/page/[n]/`, pages 2..N) render IDENTICAL markup without duplication.
+// Presentational only: the route files do the data fetch (so the [n]
+// route's getStaticPaths can compute `total` once and pass it down,
+// instead of every page re-running the slow countVisible() at build).
+//
+// hrefForPage convention (the slice-3 fix): page 1 → "/", page N>1 →
+// "/page/N/". These are REAL static routes emitted by getStaticPaths, so
+// navigation works in the static build — unlike slice 2's "?page=N", which
+// a prerendered page never sees (Astro doesn't bind query params to
+// static routes), the bug that made every page show page 1.
+
+import type { Article } from '@/lib/repository/types';
+import Home from '@/layouts/Home.astro';
+import HomepageMasthead from '@/components/HomepageMasthead.astro';
+import SearchFilter from '@/components/SearchFilter.astro';
+import CompactArticleCard from '@/components/CompactArticleCard.astro';
+import NewsletterSidebar from '@/components/NewsletterSidebar.astro';
+import Pagination from '@/components/Pagination.astro';
+
+interface Props {
+  articles: Article[];
+  page: number;
+  totalPages: number;
+  total: number;
+}
+const { articles, page, totalPages, total } = Astro.props;
+
+const PAGE_SIZE = 20;
+const offset = (page - 1) * PAGE_SIZE;
+
+// Count badge: exact for small totals, "~Nk" for large (mirrors v1
+// LatestUpdates). en-US pinned so the thousands separator is always a
+// comma regardless of the OS locale.
+const countLabel = total < 10000
+  ? total.toLocaleString('en-US')
+  : `~${Math.round(total / 1000).toLocaleString('en-US')}k`;
+
+// page 1 → clean "/" ; page N>1 → "/page/N/" static route.
+function hrefForPage(p: number): string {
+  return p === 1 ? '/' : `/page/${p}/`;
+}
+
+const startIndex = offset + 1;
+const endIndex = offset + articles.length;
+---
+<Home title="Maritime Reader — Latest maritime news, P&I circulars, and class notices">
+  <HomepageMasthead />
+  <SearchFilter />
+
+  {/* Static server-rendered feed. SearchFilter's JS hides this (#static-feed)
+      and shows its own Pagefind card results when a query/facet is active. */}
+  <div id="static-feed">
+  <div class="max-w-7xl 2xl:max-w-[100rem] mx-auto px-4 py-6 flex gap-6 items-start">
+    <section class="flex-1 min-w-0 bg-white rounded-lg border border-slate-200">
+      <div class="px-4 py-6">
+        <header class="flex items-baseline justify-between mb-4">
+          <h2 class="text-lg font-bold tracking-tight text-slate-900">
+            Latest Updates
+            {total > 0 && (
+              <span class="ml-2 text-sm font-normal text-slate-500">({countLabel})</span>
+            )}
+          </h2>
+          {totalPages > 1 && (
+            <span class="text-xs text-slate-500">
+              Page {page.toLocaleString('en-US')} of {totalPages.toLocaleString('en-US')}
+            </span>
+          )}
+        </header>
+
+        {articles.length === 0 ? (
+          <div class="p-12 text-center rounded-lg border border-dashed border-slate-300">
+            <p class="text-sm text-slate-600">No visible articles match this page.</p>
+            <a href="/" class="text-sm text-sky-600 hover:underline mt-2 inline-block">Back to page 1</a>
+          </div>
+        ) : (
+          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+            {articles.map((a) => <CompactArticleCard article={a} />)}
+          </div>
+        )}
+
+        {totalPages > 1 && (
+          <Pagination
+            page={page}
+            totalPages={totalPages}
+            startIndex={startIndex}
+            endIndex={endIndex}
+            total={total}
+            hrefForPage={hrefForPage}
+          />
+        )}
+      </div>
+    </section>
+
+    {/* 2xl-only newsletter rail — matches v1 layout. Sticky so it stays
+        in view as the feed scrolls. */}
+    <aside class="hidden 2xl:block w-72 shrink-0">
+      <div class="sticky top-6">
+        <NewsletterSidebar />
+      </div>
+    </aside>
+  </div>
+  </div>{/* /#static-feed */}
+
+  {/* Client-side relative time. The static build bakes each card's "X ago"
+      at BUILD time, so it freezes until the next rebuild (a card showed
+      "35m ago" for hours, 2026-06-06). Recompute from each <time datetime>
+      on load so it reflects when the visitor actually views the page. Kept
+      is:inline (one tiny script per page, no extra _astro/*.js request);
+      the build-time text remains as the no-JS fallback. */}
+  <script is:inline>
+    (function () {
+      function rel(iso) {
+        var then = new Date(iso).getTime();
+        if (isNaN(then)) return '';
+        var s = Math.max(0, (Date.now() - then) / 1000), m = s / 60;
+        if (m < 1) return 'just now';
+        if (m < 60) return Math.floor(m) + 'm ago';
+        var h = m / 60; if (h < 24) return Math.floor(h) + 'h ago';
+        var d = h / 24; if (d < 7) return Math.floor(d) + 'd ago';
+        if (d < 30) return Math.floor(d / 7) + 'w ago';
+        if (d < 365) return Math.floor(d / 30) + 'mo ago';
+        return Math.floor(d / 365) + 'y ago';
+      }
+      var els = document.querySelectorAll('time[data-ago]');
+      for (var i = 0; i < els.length; i++) {
+        var t = rel(els[i].getAttribute('datetime'));
+        if (t) els[i].textContent = t;
+      }
+    })();
+  </script>
+</Home>

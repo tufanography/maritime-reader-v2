@@ -1,0 +1,14 @@
+@import "tailwindcss";
+
+/* Playfair Display for the editorial masthead. Loaded once, used only
+   in HomepageMasthead — costs ~30KB and saves having to rebuild the
+   newspaper-banner feel. */
+@import url("https://fonts.googleapis.com/css2?family=Playfair+Display:wght@900&display=swap");
+
+:root {
+  --font-playfair: "Playfair Display", "Times New Roman", serif;
+}
+
+html {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+}

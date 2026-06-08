@@ -1,0 +1,43 @@
+# DELTA + FEED deploy — every 3 hours.
+# Keeps the homepage feed AND search ~3h-fresh without re-reading all 51k rows
+# from Supabase Nano: a light build (ARTICLE_PAGE_LIMIT=1500 ≈ last ~2 weeks,
+# ~2.7s / 2.6MB DB read — measured 2026-06-08) produces the feed + recent article
+# detail pages + a small `_pagefind-delta` index. The client merges that delta on
+# top of the static base index (`pf.mergeIndex('/_pagefind-delta', {baseUrl:'/'})`).
+# Upload is INCREMENTAL (only changed files, manifest in R2) so it's ~free.
+# The full BASE index is rebuilt separately by deploy-base.yml (weekly) and is
+# NEVER touched here (DEPLOY_MODE=delta excludes _pagefind/).
+name: deploy-delta
+on:
+  schedule:
+    - cron: '0 */3 * * *'   # every 3 hours (UTC)
+  workflow_dispatch:         # manual run button
+# Serialize with deploy-base so the two never race the R2 manifest.
+concurrency:
+  group: maritime-r2-deploy
+  cancel-in-progress: false
+jobs:
+  deploy-delta:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Build feed + recent article pages (light DB read)
+        run: npm run build:feed
+        env:
+          ARTICLE_PAGE_LIMIT: '1500'
+          PUBLIC_SUPABASE_URL: ${{ secrets.PUBLIC_SUPABASE_URL }}
+          PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.PUBLIC_SUPABASE_ANON_KEY }}
+      - name: Build delta search index
+        run: npx pagefind --site dist --output-subdir _pagefind-delta
+      - name: Incremental upload (delta scope — base index untouched)
+        run: npm run deploy:r2
+        env:
+          DEPLOY_MODE: delta
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}

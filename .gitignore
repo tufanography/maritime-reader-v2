@@ -1,0 +1,11 @@
+node_modules/
+dist/
+.env
+.astro/
+.wrangler/
+.DS_Store
+
+# Local-only secrets / scratch (never commit). R2 creds live OUTSIDE the repo
+# (D:/tmp/r2-creds.txt) for manual runs; CI uses GitHub Secrets.
+*.local
+_probe.mjs

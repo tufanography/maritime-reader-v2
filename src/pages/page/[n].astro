@@ -1,0 +1,43 @@
+---
+// Static pagination routes — slice 3 (2026-05-31). Emits /page/2/ ..
+// /page/N/ as real prerendered pages so feed navigation works in the
+// static build (the slice-2 "?page=N" approach silently always showed
+// page 1 because Astro doesn't bind query params to prerendered routes).
+//
+// Page 1 lives at "/" (index.astro), so this route enumerates 2..N only.
+// getStaticPaths runs countVisible ONCE and passes `total`/`totalPages`
+// down as props, so the per-page build does only its own 20-row slice
+// query — never the slow count again (which, ×N pages, would dominate
+// build time). Fully static: no request-time DB, per Hard Constraint #4.
+
+import ArticleFeed from '@/components/ArticleFeed.astro';
+import { articleRepo } from '@/lib/repository/SupabaseArticleRepository';
+
+const PAGE_SIZE = 20;
+
+export async function getStaticPaths() {
+  // PAGE_SIZE / MAX_PAGES declared INSIDE here too: Astro hoists
+  // getStaticPaths above the module-scope consts and runs it in isolation,
+  // so the outer consts are not yet initialised when this executes (the
+  // "PAGE_SIZE is not defined" ReferenceError). Keep in sync with
+  // index.astro: cap the navigable window at MAX_PAGES (deep archive via
+  // search/filters, not paging).
+  const PAGE_SIZE = 20;
+  const MAX_PAGES = 100;
+  const total = await articleRepo.countVisible();
+  const totalPages = Math.min(MAX_PAGES, Math.max(1, Math.ceil(total / PAGE_SIZE)));
+  // Page 1 lives at "/", so enumerate 2..totalPages only.
+  const paths = [];
+  for (let n = 2; n <= totalPages; n++) {
+    paths.push({ params: { n: String(n) }, props: { total, totalPages } });
+  }
+  return paths;
+}
+
+const { n } = Astro.params;
+const { total, totalPages } = Astro.props as { total: number; totalPages: number };
+const page = Number(n);
+const offset = (page - 1) * PAGE_SIZE;
+const articles = await articleRepo.listVisiblePage(offset, PAGE_SIZE);
+---
+<ArticleFeed articles={articles} page={page} totalPages={totalPages} total={total} />

@@ -1,0 +1,20 @@
+---
+import FilterFeed from '@/components/FilterFeed.astro';
+import { articleRepo } from '@/lib/repository/SupabaseArticleRepository';
+import { SEGMENTS, SEGMENT_LABEL, type Segment } from '@/lib/taxonomy';
+
+export async function getStaticPaths() {
+  return SEGMENTS.map((segment) => ({ params: { segment } }));
+}
+
+const { segment } = Astro.params as { segment: Segment };
+const articles = await articleRepo.listBySegment(segment, 100);
+const label = SEGMENT_LABEL[segment];
+---
+<FilterFeed
+  articles={articles}
+  kicker="Segment"
+  title={label}
+  subtitle={`${articles.length} visible articles in the ${label} segment.`}
+  emptyMessage={`No visible articles in ${label} yet.`}
+/>

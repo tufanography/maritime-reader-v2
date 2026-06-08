@@ -1,0 +1,39 @@
+---
+// Newspaper-style banner. Mirrors v1's HomepageMasthead.tsx layout —
+// large Playfair wordmark + red bullet-separated tagline strip with
+// today's date. Date is computed at build/dev time on the server so
+// the day-of-week reflects publication UTC, not the visitor's tz.
+const d = new Date();
+const day = String(d.getUTCDate()).padStart(2, '0');
+const mon = d.toLocaleDateString('en-US', { month: 'short', timeZone: 'UTC' });
+const year = d.getUTCFullYear();
+const weekday = d.toLocaleDateString('en-US', { weekday: 'long', timeZone: 'UTC' });
+const today = `${day} ${mon} ${year} ${weekday}`.toUpperCase();
+---
+<section class="px-4 pt-6 pb-3 flex flex-col items-center bg-white border-b border-slate-200">
+  {/* Wordmark links home (clears search/filters → clean feed). The user asked
+      for an obvious way back to the homepage from the search/filter view. */}
+  <a href="/" aria-label="Maritime Reader — home" class="hover:opacity-90 transition">
+    <h1
+      class="font-black text-sky-900 leading-none tracking-tight text-center"
+      style="font-family: var(--font-playfair); font-size: clamp(2rem, 6vw, 4rem); letter-spacing: -0.02em;"
+    >
+      Maritime Reader
+    </h1>
+  </a>
+
+  <div class="mt-3 px-4 sm:px-8 py-2 bg-red-700 text-white text-[10px] sm:text-xs font-extrabold uppercase tracking-[0.2em] sm:tracking-[0.3em] rounded-sm shadow-md text-center whitespace-nowrap">
+    MARITIME
+    <span class="mx-2 sm:mx-3 opacity-70">●</span>
+    INTELLIGENCE
+    <span class="mx-2 sm:mx-3 opacity-70">●</span>
+    DAILY
+    <span class="hidden sm:inline">
+      <span class="mx-3 opacity-70">●</span>
+      {today}
+    </span>
+  </div>
+  <div class="mt-1.5 sm:hidden text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-500 text-center">
+    {today}
+  </div>
+</section>

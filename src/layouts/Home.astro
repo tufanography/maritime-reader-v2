@@ -1,0 +1,47 @@
+---
+import '../styles/global.css';
+import Search from '../components/Search.astro';
+interface Props {
+  title: string;
+  description?: string;
+}
+const { title, description = 'Aggregated maritime news, P&I club circulars, classification society notices, and port-state-control alerts. Updated continuously.' } = Astro.props;
+
+// Feed pages (homepage + pagination) carry the slice-2b SearchFilter, which IS
+// the search surface there — so the header's Default-UI Search is hidden on them
+// to avoid two search boxes (the confusion the user flagged 2026-06-07). Every
+// other page (article, /segment, /type, /theme, /source) keeps the header Search.
+const path = Astro.url.pathname;
+const showHeaderSearch = !(path === '/' || path.startsWith('/page/'));
+---
+<!doctype html>
+<html lang="en" class="bg-slate-50">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{title}</title>
+    <meta name="description" content={description} />
+  </head>
+  <body class="min-h-screen bg-slate-50 text-slate-900 antialiased">
+    {/* Global search — present on EVERY Home-layout page (homepage + article
+        pages), not just the Base-layout filter pages. Pagefind loads its index
+        + (on idle) preloads wasm/meta from R2 (cdn.maritimereader.com) so the
+        first search is fast wherever the visitor lands. Was missing on the
+        homepage — the page most visitors start on — found in the 2026-06-05
+        pre-cutover review. */}
+    {showHeaderSearch && (
+      <div class="border-b border-slate-200 bg-white">
+        <div class="max-w-7xl mx-auto px-4 py-3">
+          <Search />
+        </div>
+      </div>
+    )}
+    <slot />
+    <footer class="border-t border-slate-200 mt-12 py-6 text-xs text-slate-500">
+      <div class="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+        <span>Maritime Reader v2 · static build · pre-rendered from Supabase</span>
+        <span>no runtime AI · no runtime DB</span>
+      </div>
+    </footer>
+  </body>
+</html>

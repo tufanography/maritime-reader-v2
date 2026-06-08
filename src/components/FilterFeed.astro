@@ -1,0 +1,97 @@
+---
+// Card-grid feed for the FILTER pages (theme / segment / type / source).
+// Mirrors the HOMEPAGE feed (ArticleFeed.astro) so a filtered view looks
+// identical to the homepage — light theme, CompactArticleCard grid WITH
+// images/“X ago”/doc-type badge, the FilterBar, and search — instead of the
+// old dark Base.astro <ul> list (ArticleList.astro) the user flagged
+// 2026-06-06 ("black background, 100 imageless items; I want it listed like
+// our homepage / like v1").
+//
+// No pagination: a filter view caps at the 100 most-recent matches (the deep
+// archive of a facet is reached via search). Presentational only — the route
+// files (theme/segment/type/source) do the data fetch and pass the label +
+// count sentence in.
+//
+// The "X ago" recompute <script is:inline> below is intentionally COPIED from
+// ArticleFeed.astro rather than shared, to keep the homepage feed byte-for-byte
+// untouched by this change (pre-cutover, zero homepage-regression risk). Both
+// scripts target every `time[data-ago]` on the page identically.
+
+import type { Article } from '@/lib/repository/types';
+import Home from '@/layouts/Home.astro';
+import FilterBar from '@/components/FilterBar.astro';
+import CompactArticleCard from '@/components/CompactArticleCard.astro';
+import NewsletterSidebar from '@/components/NewsletterSidebar.astro';
+
+interface Props {
+  articles: Article[];
+  kicker: string;    // "Theme" / "Segment" / "Type" / "Source"
+  title: string;     // the human-readable label
+  subtitle: string;  // count sentence, e.g. "42 visible articles tagged Safety."
+  emptyMessage: string;
+}
+const { articles, kicker, title, subtitle, emptyMessage } = Astro.props;
+const pageTitle = `${title} — Maritime Reader`;
+---
+<Home title={pageTitle} description={subtitle}>
+  <FilterBar />
+
+  <div class="max-w-7xl 2xl:max-w-[100rem] mx-auto px-4 py-6 flex gap-6 items-start">
+    <section class="flex-1 min-w-0 bg-white rounded-lg border border-slate-200">
+      <div class="px-4 py-6">
+        <header class="mb-4">
+          <p class="text-xs uppercase tracking-wide text-slate-400 mb-2">{kicker}</p>
+          <h1 class="text-lg font-bold tracking-tight text-slate-900">{title}</h1>
+          <p class="text-sm text-slate-500 mt-1">{subtitle}</p>
+        </header>
+
+        {articles.length === 0 ? (
+          <div class="p-12 text-center rounded-lg border border-dashed border-slate-300">
+            <p class="text-sm text-slate-600">{emptyMessage}</p>
+            <a href="/" class="text-sm text-sky-600 hover:underline mt-2 inline-block">← Back to latest</a>
+          </div>
+        ) : (
+          <>
+            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+              {articles.map((a) => <CompactArticleCard article={a} />)}
+            </div>
+            <p class="mt-6">
+              <a href="/" class="text-sm text-sky-600 hover:underline">← Back to latest</a>
+            </p>
+          </>
+        )}
+      </div>
+    </section>
+
+    {/* 2xl-only newsletter rail — same as the homepage feed, so filtered
+        views keep the identical layout shape. */}
+    <aside class="hidden 2xl:block w-72 shrink-0">
+      <div class="sticky top-6">
+        <NewsletterSidebar />
+      </div>
+    </aside>
+  </div>
+
+  {/* Client-side relative time — copied from ArticleFeed (see header note). */}
+  <script is:inline>
+    (function () {
+      function rel(iso) {
+        var then = new Date(iso).getTime();
+        if (isNaN(then)) return '';
+        var s = Math.max(0, (Date.now() - then) / 1000), m = s / 60;
+        if (m < 1) return 'just now';
+        if (m < 60) return Math.floor(m) + 'm ago';
+        var h = m / 60; if (h < 24) return Math.floor(h) + 'h ago';
+        var d = h / 24; if (d < 7) return Math.floor(d) + 'd ago';
+        if (d < 30) return Math.floor(d / 7) + 'w ago';
+        if (d < 365) return Math.floor(d / 30) + 'mo ago';
+        return Math.floor(d / 365) + 'y ago';
+      }
+      var els = document.querySelectorAll('time[data-ago]');
+      for (var i = 0; i < els.length; i++) {
+        var t = rel(els[i].getAttribute('datetime'));
+        if (t) els[i].textContent = t;
+      }
+    })();
+  </script>
+</Home>

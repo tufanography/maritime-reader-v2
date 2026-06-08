@@ -1,0 +1,80 @@
+---
+// Numbered pagination — slice 2 of the v2 frontend port (2026-05-31).
+// Mirrors v1's LatestUpdates.tsx inline Pagination: compact page-window
+// with `…` gaps, "Showing N–M of T" caption, prev/next links.
+//
+// hrefForPage takes a page number (1-based) and returns the URL to use.
+// For the home grid this is `/` for page 1 and `/?page=N` for N>1; the
+// homepage passes a closure that matches that convention.
+
+interface Props {
+  page: number;
+  totalPages: number;
+  startIndex: number;
+  endIndex: number;
+  total: number;
+  hrefForPage: (p: number) => string;
+}
+const { page, totalPages, startIndex, endIndex, total, hrefForPage } = Astro.props;
+
+// Compact list with `…` gaps. For totals ≤ 7 we show every page; for
+// larger totals we show 1, ..., neighbours of current, ..., last.
+function pageWindow(current: number, total: number): (number | '…')[] {
+  if (total <= 7) {
+    return Array.from({ length: total }, (_, i) => i + 1);
+  }
+  const out: (number | '…')[] = [1];
+  const start = Math.max(2, current - 2);
+  const end = Math.min(total - 1, current + 2);
+  if (start > 2) out.push('…');
+  for (let p = start; p <= end; p++) out.push(p);
+  if (end < total - 1) out.push('…');
+  out.push(total);
+  return out;
+}
+
+const pages = pageWindow(page, totalPages);
+// en-US pinned: the site is in English; an unpinned toLocaleString() picks
+// up the OS locale (tr-TR renders 49569 as "49.569" with a dot thousands
+// separator, which read as a wrong/tiny number in slice-2 review). Mirrors
+// the en-US pin already used for the header "Page X of Y" in index.astro.
+const fmt = (n: number) => n.toLocaleString('en-US');
+---
+<nav aria-label="Pagination" class="mt-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+  <span class="text-xs text-slate-500">
+    Showing {fmt(startIndex)}–{fmt(endIndex)} of {fmt(total)}
+  </span>
+  <div class="flex items-center gap-1 flex-wrap">
+    {page > 1 ? (
+      <a
+        href={hrefForPage(page - 1)}
+        class="px-3 py-1.5 rounded-md border border-slate-300 text-sm font-medium hover:bg-slate-50"
+      >← Prev</a>
+    ) : (
+      <span class="px-3 py-1.5 rounded-md border border-slate-200 text-sm text-slate-400 cursor-not-allowed">← Prev</span>
+    )}
+    {pages.map((p) =>
+      p === '…' ? (
+        <span class="px-2 text-sm text-slate-400">…</span>
+      ) : p === page ? (
+        <span
+          aria-current="page"
+          class="px-3 py-1.5 rounded-md border bg-slate-900 text-white border-slate-900 text-sm font-semibold"
+        >{p}</span>
+      ) : (
+        <a
+          href={hrefForPage(p)}
+          class="px-3 py-1.5 rounded-md border border-slate-300 text-sm hover:bg-slate-50"
+        >{p}</a>
+      )
+    )}
+    {page < totalPages ? (
+      <a
+        href={hrefForPage(page + 1)}
+        class="px-3 py-1.5 rounded-md border border-slate-300 text-sm font-medium hover:bg-slate-50"
+      >Next →</a>
+    ) : (
+      <span class="px-3 py-1.5 rounded-md border border-slate-200 text-sm text-slate-400 cursor-not-allowed">Next →</span>
+    )}
+  </div>
+</nav>

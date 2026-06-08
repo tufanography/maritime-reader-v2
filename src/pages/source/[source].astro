@@ -1,0 +1,33 @@
+---
+import FilterFeed from '@/components/FilterFeed.astro';
+import { articleRepo } from '@/lib/repository/SupabaseArticleRepository';
+import { slugify } from '@/lib/slug';
+
+export async function getStaticPaths() {
+  // Build the slug → canonical name map at build time. Collisions are
+  // rare (sources are curated) but possible; on a collision the first
+  // wins and the second source ends up un-rendered, which we'd see at
+  // build inspection.
+  const sources = await articleRepo.listAllSources();
+  const seen = new Set<string>();
+  const paths: { params: { source: string }; props: { name: string } }[] = [];
+  for (const name of sources) {
+    const slug = slugify(name);
+    if (!slug || seen.has(slug)) continue;
+    seen.add(slug);
+    paths.push({ params: { source: slug }, props: { name } });
+  }
+  return paths;
+}
+
+interface Props { name: string; }
+const { name } = Astro.props;
+const articles = await articleRepo.listBySource(name, 100);
+---
+<FilterFeed
+  articles={articles}
+  kicker="Source"
+  title={name}
+  subtitle={`${articles.length} visible articles from ${name}.`}
+  emptyMessage={`No visible articles from ${name} yet.`}
+/>

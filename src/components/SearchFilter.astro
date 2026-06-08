@@ -1,0 +1,567 @@
+---
+// Slice 2b — unified, URL-driven SEARCH + FILTER + card-grid results, all
+// client-side against the Pagefind index on cdn. Homepage: empty = the static
+// server-rendered feed (#static-feed); a query OR any facet → Pagefind cards.
+//
+// 2026-06-07 fixes (all root-caused live, not guessed):
+//  - FREEZE: pf.filters() costs ~2.4s on the 51k index; it was called on EVERY
+//    keystroke (inside run) → multi-second main-thread lock per char. Now called
+//    ONCE at init to build the facet UI; run() never calls it again.
+//  - MULTI-SELECT returned 0: Pagefind treats an ARRAY filter value as AND
+//    (`type:[news,pi_circular]` = both → 0). For OR-within-a-group we must use
+//    `{any:[...]}` (measured: any → 29,961 = News 18,227 + P&I 11,734). Done.
+//  - SORT: results were relevance-ordered (a 2-week-old item could top "News").
+//    When there's NO text query (pure browse/filter) we sort by date desc, so
+//    newest is first. Needs data-pagefind-sort="date" on article pages (added).
+//  - SOURCE is a dropdown (57 values) not a chip wall — matches v1; also removes
+//    the per-keystroke 57-chip rebuild.
+//  - Phrase search already works (Pagefind native): "exact phrase" in quotes.
+//
+// Self-contained; does NOT touch Search.astro (header search on other pages).
+// Card classes are COPIED from CompactArticleCard.astro so Tailwind (which does
+// NOT scan strings built in this is:inline script) has already emitted them.
+
+const base = (import.meta.env.PUBLIC_PAGEFIND_BASE ?? '').replace(/\/$/, '');
+---
+<section class="max-w-7xl 2xl:max-w-[100rem] mx-auto px-4 pt-4">
+  {/* Search input — capped width + centered (full-bleed reads wrong for a
+      search box) with a CUSTOM clear × pinned to the input's right edge. The
+      native type=search × can't be repositioned (it's a UA pseudo-element at the
+      field edge), so we hide it (is:global) and drive our own, which also lets us
+      reset selection state, not just the text. */}
+  <div class="relative max-w-3xl mx-auto">
+    <input
+      id="sf-q"
+      type="search"
+      placeholder={'Search maritime news…   (use "quotes" for an exact phrase)'}
+      autocomplete="off"
+      class="w-full px-4 py-2.5 pr-10 rounded-lg border border-slate-300 text-sm focus:outline-none focus:border-sky-400"
+    />
+    <button id="sf-q-clear" type="button" aria-label="Clear search"
+      class="hidden absolute right-3 top-1/2 -translate-y-1/2 w-6 h-6 items-center justify-center rounded-full text-slate-400 hover:text-slate-700 hover:bg-slate-100 text-lg leading-none">×</button>
+  </div>
+
+  {/* Type / Segment / Theme chip rows — built ONCE at init from pagefind.filters() */}
+  <div id="sf-facets" class="mt-3 space-y-2"></div>
+
+  {/* Source — grouped MULTI-select checkbox panel (mirrors v1 SourceFilterDropdown) */}
+  <div class="mt-2 flex items-start gap-3">
+    <span class="text-xs font-bold uppercase tracking-wide text-slate-700 w-20 shrink-0 pt-1.5">Source</span>
+    <div class="relative">
+      <button id="sf-source-btn" type="button" class="sf-chip">All sources ▾</button>
+      <div id="sf-source-panel" class="hidden absolute z-20 mt-1 w-72 bg-white border border-slate-200 rounded-lg shadow-lg p-2">
+        <input id="sf-source-q" type="text" placeholder="Filter sources…" class="w-full px-2 py-1.5 mb-2 rounded border border-slate-300 text-xs focus:outline-none focus:border-sky-400" />
+        <div id="sf-source-list" class="max-h-72 overflow-y-auto pr-1"></div>
+      </div>
+    </div>
+  </div>
+  {/* Tailwind safelist: these classes are built inside the is:inline script
+      (sf-source-list items) which Tailwind does NOT scan, so reference them here. */}
+  <div hidden class="text-[10px] font-bold uppercase tracking-wide text-slate-400 mt-2 mb-1 px-1 flex items-center gap-2 text-sm py-0.5 rounded hover:bg-slate-50 cursor-pointer truncate accent-sky-600"></div>
+
+  {/* Active selections — bordered box so the user clearly sees their active
+      filters; each removable via its ×, plus a prominent Clear all */}
+  <div id="sf-active" class="mt-3 hidden flex-wrap items-center gap-3 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3">
+    <span id="sf-count" class="text-sm font-bold text-slate-900"></span>
+    <div id="sf-chips" class="flex flex-wrap gap-2"></div>
+    <button id="sf-clear" class="shrink-0 inline-flex items-center px-3 py-1 rounded-full border border-rose-300 text-rose-600 text-xs font-semibold hover:bg-rose-50 transition">Clear all</button>
+  </div>
+</section>
+
+<section id="sf-results-wrap" class="max-w-7xl 2xl:max-w-[100rem] mx-auto px-4 py-6 hidden">
+  <div id="sf-loading" class="hidden text-center py-16">
+    <div class="sf-sonar" aria-hidden="true"><span></span><span></span><span></span></div>
+    <p class="text-xl font-semibold text-slate-600 tracking-tight mt-5">Searching the archive…</p>
+  </div>
+  <div id="sf-results" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4"></div>
+  <div class="mt-6 text-center">
+    <button id="sf-more" class="hidden px-4 py-2 rounded-lg border border-slate-300 text-sm text-slate-700 hover:border-slate-400">Load more</button>
+    <p id="sf-empty" class="hidden p-12 text-sm text-slate-600">No results match your search and filters.</p>
+  </div>
+</section>
+
+<script is:inline define:vars={{ base }}>
+  (function () {
+    // Date-sort needs data-pagefind-sort indexed. The article template emits it,
+    // but it only reaches the LIVE index after a _pagefind REGEN (B3). Requesting
+    // sort:{date} on an index that LACKS the sort key returns results (count is
+    // right) but BREAKS result rendering → 0 cards (proven live 2026-06-07; local
+    // passed only because its regen had the key). So keep DATE_SORT off until B3's
+    // regen lands, then flip to true. Until then, browse falls back to relevance.
+    var DATE_SORT = true; // B3 (2026-06-08): data-pagefind-sort="date" is now in the regenerated index
+    var CHIP_FACETS = ['type', 'segment', 'theme']; // source is a dropdown
+    var ALL_FACETS = ['type', 'segment', 'theme', 'source'];
+    var FACET_LABEL = { type: 'Type', segment: 'Segment', theme: 'Theme' };
+    var TYPE_LABEL = { news: 'News', press_release: 'Press', pi_circular: 'P&I', class_notice: 'Class',
+      regulation: 'Regulation', market_report: 'Market', casualty_report: 'Casualty', psc_report: 'PSC' };
+    var PAGE = 24;
+
+    // Source grouping — ported verbatim from v1 components/v3/SourceFilterDropdown.tsx
+    var SRC_GROUP_ORDER = ['news', 'pi', 'psc', 'magazines', 'youtube', 'others'];
+    var SRC_GROUP_LABELS = { news: 'Marine News', pi: 'P&I Clubs', psc: 'Port State Control',
+      magazines: 'Magazines', youtube: 'YouTube', others: 'Others' };
+    var PI_NAMES = { 'Gard': 1, 'Gard — Hot topics': 1, 'Skuld': 1, 'UK P&I Club': 1, 'Britannia P&I': 1,
+      'Steamship Mutual': 1, 'NorthStandard': 1, 'Swedish Club': 1, 'West of England': 1,
+      'American P&I Club': 1, 'Japan P&I Club': 1, 'London P&I Club': 1, "Shipowners' Club": 1 };
+    var PSC_NAMES = { 'Paris MOU': 1, 'Tokyo MOU': 1, 'Caribbean MOU': 1, 'Mediterranean MoU': 1,
+      'Black Sea MoU Detentions': 1, 'Black Sea MoU News': 1 };
+    var MAGAZINE_NAMES = { 'ABS Newly Classed Vessels': 1, 'ABS Rules & Guides Highlights': 1, 'ABS Regulatory Lessons': 1 };
+    var OTHER_NAMES = { 'ABS': 1, 'BIMCO': 1, 'Polish Register of Shipping': 1, 'RightShip Insights': 1 };
+    function srcGroupOf(name) {
+      if (/\(YouTube\)\s*$/i.test(name)) return 'youtube';
+      if (MAGAZINE_NAMES[name]) return 'magazines';
+      if (OTHER_NAMES[name]) return 'others';
+      if (PSC_NAMES[name]) return 'psc';
+      if (PI_NAMES[name]) return 'pi';
+      return 'news';
+    }
+
+    var qEl = document.getElementById('sf-q');
+    var facetsEl = document.getElementById('sf-facets');
+    var sourceBtn = document.getElementById('sf-source-btn');
+    var sourcePanel = document.getElementById('sf-source-panel');
+    var sourceQ = document.getElementById('sf-source-q');
+    var sourceList = document.getElementById('sf-source-list');
+    var sourceCounts = {}; // name -> count, from pf.filters() at init
+    var resultsWrap = document.getElementById('sf-results-wrap');
+    var resultsEl = document.getElementById('sf-results');
+    var moreBtn = document.getElementById('sf-more');
+    var emptyEl = document.getElementById('sf-empty');
+    var loadEl = document.getElementById('sf-loading');
+    var activeEl = document.getElementById('sf-active');
+    var countEl = document.getElementById('sf-count');
+    var chipsEl = document.getElementById('sf-chips');
+    var clearBtn = document.getElementById('sf-clear');
+    var qClear = document.getElementById('sf-q-clear');
+    if (!qEl) return;
+
+    // Custom search-clear × (native type=search × is hidden in is:global; it
+    // can't be repositioned). Visible only when the input has text.
+    function syncQClear() {
+      if (!qClear) return;
+      var has = qEl.value.length > 0;
+      qClear.classList.toggle('hidden', !has);
+      qClear.classList.toggle('flex', has);
+    }
+
+    var pf = null, pending = null, debounce = null;
+    var sel = { q: '', type: new Set(), segment: new Set(), theme: new Set(), source: new Set() };
+    var results = [], shown = 0;
+    var seenUrls = {}; // dedup base+delta overlap at render (same article in both indexes)
+
+    function isActive() { return !!sel.q || ALL_FACETS.some(function (k) { return sel[k].size > 0; }); }
+
+    function readURL() {
+      var p = new URLSearchParams(location.search);
+      sel.q = p.get('q') || '';
+      ALL_FACETS.forEach(function (k) { sel[k] = new Set((p.get(k) || '').split(',').filter(Boolean)); });
+      qEl.value = sel.q;
+      // source state is reflected by updateChipStates (button) + renderSourceList
+      // (checkboxes, re-rendered when the panel opens) — no select to sync.
+    }
+    function writeURL() {
+      var p = new URLSearchParams();
+      if (sel.q) p.set('q', sel.q);
+      ALL_FACETS.forEach(function (k) { if (sel[k].size) p.set(k, Array.from(sel[k]).join(',')); });
+      var qs = p.toString();
+      history.replaceState(null, '', qs ? location.pathname + '?' + qs : location.pathname);
+    }
+
+    // OR within a group → Pagefind {any:[...]}. AND across groups is implicit.
+    function filtersObj() {
+      var f = {};
+      ALL_FACETS.forEach(function (k) { if (sel[k].size) f[k] = { any: Array.from(sel[k]) }; });
+      return f;
+    }
+
+    function esc(s) { return (s == null ? '' : String(s)).replace(/[&<>"]/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+    function ago(iso) {
+      var t = new Date(iso).getTime(); if (isNaN(t)) return '';
+      var m = Math.max(0, (Date.now() - t) / 1000) / 60;
+      if (m < 1) return 'just now'; if (m < 60) return Math.floor(m) + 'm ago';
+      var h = m / 60; if (h < 24) return Math.floor(h) + 'h ago';
+      var d = h / 24; if (d < 7) return Math.floor(d) + 'd ago';
+      if (d < 30) return Math.floor(d / 7) + 'w ago';
+      if (d < 365) return Math.floor(d / 30) + 'mo ago'; return Math.floor(d / 365) + 'y ago';
+    }
+
+    function card(d) {
+      if (!d) return ''; // defensive: a result whose data() didn't resolve is skipped, never crashes render
+      var meta = d.meta || {}, f = d.filters || {};
+      var title = meta.title || 'Untitled';
+      var source = meta.source || (f.source && f.source[0]) || '';
+      var typeRaw = meta.type || (f.type && f.type[0]) || '';
+      var typeLabel = TYPE_LABEL[typeRaw] || typeRaw;
+      var date = meta.date || '';
+      var url = d.url;                 // our /article/ detail page (for "Read →")
+      var pub = meta.link || url;      // publisher URL (image+title open this in a new tab, like the homepage card)
+      var img = meta.image && meta.image.indexOf('/s2/favicons') === -1 ? meta.image : null;
+      var grad = img ? '' : 'background:linear-gradient(135deg,#0ea5e933,#0ea5e910);';
+      var imgPart = img
+        ? '<img src="' + esc(img) + '" alt="" loading="lazy" referrerpolicy="no-referrer" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300">'
+        : '';
+      return '' +
+      '<article class="group flex flex-col rounded-lg border border-slate-200 hover:border-sky-400 transition bg-white">' +
+        '<a href="' + esc(pub) + '" target="_blank" rel="noopener noreferrer" class="block aspect-video bg-slate-100 overflow-hidden relative rounded-t-lg" style="' + grad + '">' +
+          imgPart +
+          '<div class="absolute inset-0 bg-white/10 pointer-events-none" style="backdrop-filter:blur(2.2px);-webkit-backdrop-filter:blur(2.2px);"></div>' +
+          '<div class="absolute inset-0 flex items-center justify-center pointer-events-none">' +
+            '<span class="text-white text-lg font-bold uppercase tracking-tight whitespace-nowrap max-w-[90%] truncate text-center px-2" style="text-shadow:0 2px 6px rgba(0,0,0,0.9);">' + esc(source || 'Maritime') + '</span>' +
+          '</div>' +
+        '</a>' +
+        '<div class="flex-1 p-4 flex flex-col">' +
+          '<div class="flex items-center gap-2 text-xs text-slate-500 mb-2 flex-wrap">' +
+            (typeLabel ? '<span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide bg-sky-50 text-sky-700">' + esc(typeLabel) + '</span>' : '') +
+            (source ? '<span class="truncate">' + esc(source) + '</span>' : '') +
+            (date ? '<span>·</span><time>' + esc(ago(date)) + '</time>' : '') +
+          '</div>' +
+          '<h3 class="font-semibold leading-snug mb-2 line-clamp-3 text-slate-900">' +
+            '<a href="' + esc(pub) + '" target="_blank" rel="noopener noreferrer" class="group-hover:text-sky-600">' + esc(title) + '</a>' +
+          '</h3>' +
+          '<div class="mt-auto pt-3 border-t border-slate-100 flex items-center justify-end text-xs text-slate-500">' +
+            '<a href="' + esc(url) + '" class="hover:text-sky-600">Read →</a>' +
+          '</div>' +
+        '</div>' +
+      '</article>';
+    }
+
+    // Semantic classes — styled in the <style> block (raised/pressable look,
+    // fast 70ms transition, hover-lift, pressed-when-active). Kept out of Tailwind
+    // utility strings so the JS-built buttons get full, instant styling.
+    function chipClass(on) { return 'sf-chip' + (on ? ' on' : ''); }
+    var chipEls = {}; // facet -> [{value, btn}]
+
+    // Build the facet UI ONCE (init only). pf.filters() is ~2.4s on 51k — never
+    // call it per-keystroke.
+    function buildFacetsOnce(available) {
+      facetsEl.innerHTML = '';
+      chipEls = {};
+      CHIP_FACETS.forEach(function (k) {
+        var counts = available[k] || {};
+        var entries = Object.keys(counts).map(function (v) { return [v, counts[v]]; });
+        if (!entries.length) return;
+        entries.sort(function (a, b) { return b[1] - a[1]; });
+        var row = document.createElement('div');
+        row.className = 'flex items-start gap-3';
+        var lab = document.createElement('div');
+        lab.className = 'text-xs font-bold uppercase tracking-wide text-slate-700 w-20 shrink-0 pt-1.5';
+        lab.textContent = FACET_LABEL[k];
+        var chips = document.createElement('div');
+        chips.className = 'flex items-center flex-wrap gap-2 flex-1 min-w-0';
+        chipEls[k] = [];
+        entries.forEach(function (e) {
+          var val = e[0], cnt = e[1];
+          var b = document.createElement('button');
+          b.className = chipClass(sel[k].has(val));
+          var label = k === 'type' ? (TYPE_LABEL[val] || val) : val;
+          b.innerHTML = esc(label) + (cnt ? ' <span class="cnt">' + cnt + '</span>' : '');
+          b.addEventListener('click', function () {
+            if (sel[k].has(val)) sel[k].delete(val); else sel[k].add(val);
+            run();
+          });
+          chips.appendChild(b);
+          chipEls[k].push({ value: val, btn: b });
+        });
+        row.appendChild(lab); row.appendChild(chips); facetsEl.appendChild(row);
+      });
+      // source — grouped multi-select checkbox list
+      sourceCounts = available.source || {};
+      renderSourceList('');
+      updateChipStates();
+    }
+
+    // Build the grouped checkbox list (filtered by `q`). Mirrors v1's grouping.
+    function renderSourceList(q) {
+      if (!sourceList) return;
+      q = (q || '').toLowerCase();
+      var grouped = { news: [], pi: [], psc: [], magazines: [], youtube: [], others: [] };
+      Object.keys(sourceCounts).forEach(function (name) {
+        if (q && name.toLowerCase().indexOf(q) === -1) return;
+        grouped[srcGroupOf(name)].push(name);
+      });
+      var html = '';
+      SRC_GROUP_ORDER.forEach(function (g) {
+        var list = grouped[g];
+        if (!list.length) return;
+        list.sort(function (a, b) { return a.localeCompare(b); });
+        html += '<div class="text-[10px] font-bold uppercase tracking-wide text-slate-400 mt-2 mb-1 px-1">' + esc(SRC_GROUP_LABELS[g]) + '</div>';
+        list.forEach(function (name) {
+          html += '<label class="flex items-center gap-2 text-sm py-0.5 px-1 rounded hover:bg-slate-50 cursor-pointer">' +
+            '<input type="checkbox" class="accent-sky-600" data-src="' + esc(name) + '"' + (sel.source.has(name) ? ' checked' : '') + '>' +
+            '<span class="truncate">' + esc(name) + ' <span class="text-slate-400">(' + (sourceCounts[name] || 0) + ')</span></span></label>';
+        });
+      });
+      if (!html) html = '<p class="text-xs text-slate-500 py-2 text-center">No sources match.</p>';
+      sourceList.innerHTML = html;
+      Array.prototype.forEach.call(sourceList.querySelectorAll('input[data-src]'), function (cb) {
+        cb.addEventListener('change', function () {
+          var name = cb.getAttribute('data-src');
+          if (cb.checked) sel.source.add(name); else sel.source.delete(name);
+          updateChipStates();
+          run();
+        });
+      });
+    }
+
+    function updateChipStates() {
+      CHIP_FACETS.forEach(function (k) {
+        (chipEls[k] || []).forEach(function (c) {
+          c.btn.className = chipClass(sel[k].has(c.value));
+        });
+      });
+      if (sourceBtn) {
+        var n = sel.source.size;
+        sourceBtn.textContent = (n === 0 ? 'All sources' : n === 1 ? Array.from(sel.source)[0] : n + ' sources') + ' ▾';
+        sourceBtn.className = chipClass(n > 0);
+      }
+    }
+
+    // Selected filters as removable pills (each with ×) under the facets.
+    function renderActiveChips() {
+      if (!chipsEl) return;
+      function pill(label, k, val) {
+        return '<span class="sf-pill">' + esc(label) +
+          '<button data-k="' + esc(k) + '" data-v="' + esc(val) + '" class="sf-pill-x" aria-label="remove">×</button></span>';
+      }
+      var html = '';
+      if (sel.q) html += pill('“' + sel.q + '”', 'q', '');
+      CHIP_FACETS.forEach(function (k) {
+        sel[k].forEach(function (v) { html += pill(k === 'type' ? (TYPE_LABEL[v] || v) : v, k, v); });
+      });
+      sel.source.forEach(function (v) { html += pill(v, 'source', v); });
+      chipsEl.innerHTML = html;
+      Array.prototype.forEach.call(chipsEl.querySelectorAll('button[data-k]'), function (b) {
+        b.addEventListener('click', function () {
+          var k = b.getAttribute('data-k'), v = b.getAttribute('data-v');
+          if (k === 'q') { sel.q = ''; qEl.value = ''; } else sel[k].delete(v);
+          run();
+        });
+      });
+    }
+
+    function renderChunk() {
+      var html = '';
+      for (var i = shown; i < Math.min(shown + PAGE, results.length); i++) {
+        var r = results[i];
+        if (!r || !r.__data) continue;
+        // Dedup base+delta overlap: a recent article is in BOTH indexes (different
+        // fragment ids, SAME url) → render it once. Keyed on the detail-page url.
+        var u = r.__data.url;
+        if (u) { if (seenUrls[u]) continue; seenUrls[u] = 1; }
+        html += card(r.__data);
+      }
+      resultsEl.insertAdjacentHTML('beforeend', html);
+      shown = Math.min(shown + PAGE, results.length);
+      moreBtn.classList.toggle('hidden', shown >= results.length);
+    }
+    // Resolve each result's data() with a per-item timeout + catch, so ONE slow/
+    // failing/CORP-blocked fragment can never hang or blank the whole render.
+    // renderChunk then simply skips any result whose __data didn't resolve.
+    function withTimeout(p, ms) {
+      return new Promise(function (resolve) {
+        var done = false;
+        var t = setTimeout(function () { if (!done) { done = true; resolve(); } }, ms);
+        p.then(function (v) { if (!done) { done = true; clearTimeout(t); resolve(v); } },
+               function () { if (!done) { done = true; clearTimeout(t); resolve(); } });
+      });
+    }
+    async function ensureData(from, to) {
+      var jobs = [];
+      for (var i = from; i < Math.min(to, results.length); i++) {
+        (function (r) {
+          if (!r || r.__data || typeof r.data !== 'function') return;
+          jobs.push(withTimeout(r.data().then(function (d) { r.__data = d; }), 8000));
+        })(results[i]);
+      }
+      await Promise.all(jobs);
+    }
+
+    async function run() {
+      if (!pf) return;
+      writeURL();
+      updateChipStates();
+      renderActiveChips();
+      var active = isActive();
+      var staticFeed = document.getElementById('static-feed');
+      if (staticFeed) staticFeed.hidden = active;
+      resultsWrap.classList.toggle('hidden', !active);
+      activeEl.classList.toggle('hidden', !active);
+      activeEl.classList.toggle('flex', active);
+      if (!active) { resultsEl.innerHTML = ''; results = []; shown = 0; if (loadEl) loadEl.classList.add('hidden'); return; }
+
+      // Show the loading state IMMEDIATELY so a search/filter never looks like a
+      // blank/broken screen during the wait (cold cdn index load measured ~9.5s
+      // first time, ~1.6s warm). Cleared once results render.
+      resultsEl.innerHTML = ''; shown = 0; seenUrls = {};
+      emptyEl.classList.add('hidden');
+      if (loadEl) loadEl.classList.remove('hidden');
+
+      var token = {}; pending = token;
+      // Newest-first for ALL results — browse AND text queries (user, 2026-06-08:
+      // "arama sonuçları tarih sırasına göre listelenmeli"). Pagefind's `sort`
+      // overrides relevance ranking; the date sort key is in the regenerated
+      // index (B3), so this renders cards for queries too (validated post-regen).
+      var opts = { filters: filtersObj() };
+      if (DATE_SORT) opts.sort = { date: 'desc' };
+      var search = await pf.search(sel.q || null, opts);
+      if (pending !== token) return; // a newer search will manage the loading state
+      results = search.results;
+      countEl.textContent = results.length.toLocaleString('en-US') + ' result' + (results.length === 1 ? '' : 's');
+      // A data()/render failure must never blank the feed — render whatever resolved.
+      try { await ensureData(0, PAGE); renderChunk(); } catch (e) {}
+      if (pending !== token) return;
+      if (loadEl) loadEl.classList.add('hidden');
+      emptyEl.classList.toggle('hidden', results.length > 0);
+    }
+
+    moreBtn.addEventListener('click', async function () { await ensureData(shown, shown + PAGE); renderChunk(); });
+    clearBtn.addEventListener('click', function () {
+      sel.q = ''; qEl.value = ''; ALL_FACETS.forEach(function (k) { sel[k] = new Set(); }); syncQClear(); run();
+    });
+    if (qClear) qClear.addEventListener('click', function () {
+      sel.q = ''; qEl.value = ''; syncQClear(); qEl.focus(); run();
+    });
+    qEl.addEventListener('input', function () {
+      sel.q = qEl.value.trim();
+      syncQClear();
+      clearTimeout(debounce);
+      // Short queries match a huge slice of the 51k index — heavy + useless, and
+      // 1-2 chars froze a slower machine (2026-06-08). Require 3+ chars; 0 (cleared)
+      // still runs to reset back to the static feed.
+      if (sel.q.length > 0 && sel.q.length < 3) return;
+      debounce = setTimeout(run, 300);
+    });
+    // Source panel: toggle open, re-render with current selection on open, filter
+    // as you type, close on outside-click. Checkbox changes are wired in
+    // renderSourceList (each toggles sel.source + run()).
+    if (sourceBtn) sourceBtn.addEventListener('click', function (e) {
+      e.stopPropagation();
+      var open = sourcePanel.classList.contains('hidden');
+      if (open) { renderSourceList(sourceQ ? sourceQ.value : ''); sourcePanel.classList.remove('hidden'); if (sourceQ) sourceQ.focus(); }
+      else sourcePanel.classList.add('hidden');
+    });
+    if (sourceQ) sourceQ.addEventListener('input', function () { renderSourceList(sourceQ.value); });
+    if (sourcePanel) sourcePanel.addEventListener('click', function (e) { e.stopPropagation(); });
+    document.addEventListener('click', function () { if (sourcePanel) sourcePanel.classList.add('hidden'); });
+    window.addEventListener('popstate', function () { readURL(); run(); });
+
+    async function init() {
+      try {
+        pf = await import((base || '') + '/_pagefind/pagefind.js');
+        await pf.options({ baseUrl: '/' });
+        await pf.init();
+        // Merge the DELTA index (recent ~2 weeks, rebuilt every 3h) on top of the
+        // static BASE index (full archive, rebuilt weekly) → search stays ~3h-fresh
+        // without re-reading all 51k rows from Nano. baseUrl:'/' so delta result
+        // URLs resolve to the real /article/<id>/ detail pages, not /_pagefind-delta/…
+        // (measured 2026-06-08). Wrapped: if the delta isn't deployed yet, base-only
+        // search still works. Overlap with base is deduped at render (by result.url).
+        try { await pf.mergeIndex((base || '') + '/_pagefind-delta', { baseUrl: '/' }); }
+        catch (e) { /* delta not deployed yet — base-only search is fine */ }
+        var avail = await pf.filters(); // ONE call (post-merge) — builds the facet UI
+        buildFacetsOnce(avail);
+        readURL();
+        syncQClear();
+        updateChipStates();
+        if (isActive()) run();
+        // NOTE: no eager "warming" search here. A throwaway filter search on load
+        // ran the heaviest Pagefind op (18k-result filter) concurrently with the
+        // user's first keystrokes → on a slower machine/connection the tab went
+        // "not responding" (reported 2026-06-08, appeared right after warming was
+        // added). The first filter is slower without it (cold cdn index ≈ network,
+        // async, not a freeze — the "Searching…" state covers it). Don't re-add.
+      } catch (e) { /* index not built yet (dev) — static feed stays visible */ }
+    }
+    if ('requestIdleCallback' in window) requestIdleCallback(init, { timeout: 2000 });
+    else setTimeout(init, 1);
+  })();
+</script>
+
+<style is:global>
+  /* NOTE: is:global (NOT scoped) is REQUIRED — the chips/pills/source buttons are
+     created in JS (createElement / innerHTML) so they never get Astro's scope
+     attribute; a scoped selector (.sf-chip[data-astro-cid]) would not match them.
+     Class names are unique to this component, so global is safe. */
+
+  /* Hide the browser's native type=search clear ×; we render our own (#sf-q-clear)
+     pinned to the input edge — the UA pseudo-element can't be repositioned. */
+  #sf-q::-webkit-search-cancel-button { -webkit-appearance: none; appearance: none; }
+  #sf-q::-webkit-search-decoration { -webkit-appearance: none; appearance: none; }
+
+  /* Sonar-ping loading animation (CSS-only, maritime theme, sky palette).
+     3 staggered expanding rings + a solid center dot. When #sf-loading gets the
+     `hidden` class (display:none) the whole subtree — animation included — is
+     removed, so it disappears cleanly and burns no CPU while idle. */
+  .sf-sonar {
+    position: relative;
+    width: 72px;
+    height: 72px;
+    margin: 0 auto;
+  }
+  .sf-sonar::after {
+    content: '';
+    position: absolute;
+    inset: 44%;
+    background: #0284c7; /* sky-600 */
+    border-radius: 9999px;
+  }
+  .sf-sonar span {
+    position: absolute;
+    inset: 0;
+    border: 2px solid #0ea5e9; /* sky-500 */
+    border-radius: 9999px;
+    opacity: 0;
+    animation: sf-ping 1.8s cubic-bezier(0, 0.2, 0.8, 1) infinite;
+  }
+  .sf-sonar span:nth-child(2) { animation-delay: 0.6s; }
+  .sf-sonar span:nth-child(3) { animation-delay: 1.2s; }
+  @keyframes sf-ping {
+    0%   { transform: scale(0.25); opacity: 0.85; }
+    100% { transform: scale(1);    opacity: 0; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .sf-sonar span { animation-duration: 3.6s; }
+  }
+
+  /* Facet/source buttons — raised, pressable. Fast (70ms) so the color change
+     on click is instant; hover lifts; the active/pressed state drops the shadow
+     (inset) for a "pushed in" feel. Palette matches the site (slate). */
+  .sf-chip {
+    display: inline-flex; align-items: center; gap: 0.3rem;
+    padding: 0.3rem 0.85rem;
+    border-radius: 9999px;
+    border: 1px solid #cbd5e1;            /* slate-300 */
+    background: #fff; color: #334155;     /* slate-700 */
+    font-size: 0.75rem; font-weight: 600; line-height: 1.1;
+    cursor: pointer; white-space: nowrap;
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.10);
+    transition: transform 70ms ease, box-shadow 70ms ease,
+                background-color 70ms ease, color 70ms ease, border-color 70ms ease;
+  }
+  .sf-chip:hover { transform: translateY(-1px); box-shadow: 0 3px 8px rgba(15, 23, 42, 0.16); border-color: #94a3b8; }
+  .sf-chip:active { transform: translateY(0); }
+  .sf-chip.on {
+    background: #0f172a; color: #fff; border-color: #0f172a;   /* slate-900, pressed */
+    box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.35);
+    transform: translateY(0);
+  }
+  .sf-chip.on:hover { transform: translateY(0); box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.35); border-color: #0f172a; }
+  .sf-chip .cnt { opacity: 0.6; font-weight: 500; }
+
+  /* Active-filter pills — bigger, easy × target. */
+  .sf-pill {
+    display: inline-flex; align-items: center; gap: 0.35rem;
+    padding: 0.3rem 0.4rem 0.3rem 0.8rem;
+    border-radius: 9999px;
+    background: #fff; border: 1px solid #cbd5e1; color: #334155;
+    font-size: 0.8rem; white-space: nowrap;
+  }
+  .sf-pill-x {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 1.25rem; height: 1.25rem; border-radius: 9999px;
+    font-size: 1rem; line-height: 1; font-weight: 700; color: #94a3b8;
+    cursor: pointer; transition: background-color 80ms ease, color 80ms ease;
+  }
+  .sf-pill-x:hover { color: #e11d48; background: #ffe4e6; }   /* rose */
+</style>

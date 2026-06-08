@@ -1,0 +1,144 @@
+---
+// Mirrors v1's components/v3/CompactArticleCard.tsx layout, scoped to
+// v2's Article schema (no click_count / share_count / is_breaking /
+// curated topics / keywords — those land when v2's data model grows).
+//
+// Visual locks (do not relax without explicit user approval):
+// - aspect-video image area
+// - backdrop-blur of EXACTLY 2.2px (the "2.2px per the user" rule from
+//   v1's ArticleCard — frosted-glass watermark over photo or gradient)
+// - white source-name watermark, drop-shadowed for legibility on any bg
+// - title line-clamp-3
+// - meta row: doc-type badge + source name + "X ago"
+// - "Read →" link bottom-right
+
+import type { Article } from '@/lib/repository/types';
+
+interface Props { article: Article }
+const { article: a } = Astro.props;
+
+// "X ago" without pulling in date-fns. Coarse buckets are fine for an
+// editorial timestamp — minutes/hours/days/weeks/months/years.
+function formatAgo(iso: string | null): string {
+  if (!iso) return '';
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return '';
+  const diffSec = Math.max(0, (Date.now() - then) / 1000);
+  const m = diffSec / 60;
+  if (m < 1)   return 'just now';
+  if (m < 60)  return `${Math.floor(m)}m ago`;
+  const h = m / 60;
+  if (h < 24)  return `${Math.floor(h)}h ago`;
+  const d = h / 24;
+  if (d < 7)   return `${Math.floor(d)}d ago`;
+  if (d < 30)  return `${Math.floor(d / 7)}w ago`;
+  if (d < 365) return `${Math.floor(d / 30)}mo ago`;
+  return `${Math.floor(d / 365)}y ago`;
+}
+
+const ago = formatAgo(a.publishedAt);
+const detailHref = `/article/${a.id}/`;
+// v2 is a STATIC site and has no `/r/<id>` redirector — that route is v1's
+// SSR click-tracker (app/r/[id]), which was never ported, so linking the
+// card image/title to `/r/<id>/` 404'd every click (found 2026-06-05). The
+// card now opens the publisher directly, exactly like the detail page's
+// "Read full article" button (article/[id].astro uses a.url too). Falls
+// back to the in-site detail page if an article has no source URL.
+const sourceHref = a.url ?? detailHref;
+
+// Doc-type badge label set. Mirrors v1 DOCUMENT_TYPE_LABELS.
+const DOC_TYPE_LABEL: Record<string, string> = {
+  news:            'News',
+  press_release:   'Press',
+  pi_circular:     'P&I',
+  class_notice:    'Class',
+  regulation:      'Regulation',
+  market_report:   'Market',
+  casualty_report: 'Casualty',
+  psc_report:      'PSC',
+};
+const docTypeLabel = a.documentType ? DOC_TYPE_LABEL[a.documentType] ?? a.documentType : null;
+
+// Source-favicon fallback (no a.image_url): scale Google's favicon API
+// up to 128px, render at 50% opacity behind the watermark. Honest brand
+// placeholder when the source didn't expose an open-graph image.
+function faviconFor(url: string | null): string | null {
+  if (!url) return null;
+  try {
+    const host = new URL(url).hostname.replace(/^www\./, '');
+    return `https://www.google.com/s2/favicons?domain=${host}&sz=128`;
+  } catch { return null; }
+}
+// v2's Article schema doesn't carry source_website_url yet; derive a
+// fallback domain from the article's own URL until the source table
+// joins are wired in slice 2.
+const faviconUrl = !a.imageUrl ? faviconFor(a.url) : null;
+
+// Gradient fallback when no image AND no favicon — keep the card from
+// looking blank. Sky-500 base, 33→10 alpha for soft diagonal wash.
+const accent = '#0ea5e9';
+const gradientStyle = !a.imageUrl
+  ? `background: linear-gradient(135deg, ${accent}33, ${accent}10);`
+  : '';
+---
+<article class="group flex flex-col rounded-lg border border-slate-200 hover:border-sky-400 transition bg-white">
+  <a
+    href={sourceHref}
+    target="_blank"
+    rel="noopener noreferrer"
+    class="block aspect-video bg-slate-100 overflow-hidden relative rounded-t-lg"
+    style={gradientStyle}
+  >
+    {a.imageUrl && (
+      <img
+        src={a.imageUrl}
+        alt=""
+        loading="lazy"
+        referrerpolicy="no-referrer"
+        class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+      />
+    )}
+    {!a.imageUrl && faviconUrl && (
+      <img
+        src={faviconUrl}
+        alt=""
+        aria-hidden="true"
+        class="absolute inset-0 m-auto w-32 h-32 object-contain opacity-50"
+      />
+    )}
+    {/* Frosted glass: 2.2px backdrop-blur LOCKED — do not change without
+        explicit user approval. v1 ArticleCard carries the same rule. */}
+    <div class="absolute inset-0 bg-white/10 pointer-events-none" style="backdrop-filter: blur(2.2px); -webkit-backdrop-filter: blur(2.2px);"></div>
+    <div class="absolute inset-0 flex items-center justify-center pointer-events-none">
+      <span class="text-white text-lg font-bold uppercase tracking-tight whitespace-nowrap max-w-[90%] truncate text-center px-2" style="text-shadow: 0 2px 6px rgba(0,0,0,0.9);">
+        {a.sourceName ?? 'Maritime'}
+      </span>
+    </div>
+  </a>
+
+  <div class="flex-1 p-4 flex flex-col">
+    <div class="flex items-center gap-2 text-xs text-slate-500 mb-2 flex-wrap">
+      {docTypeLabel && (
+        <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide bg-sky-50 text-sky-700">
+          {docTypeLabel}
+        </span>
+      )}
+      <span class="truncate">{a.sourceName}</span>
+      {/* Relative time is recomputed in the browser from datetime — see the
+          is:inline script in ArticleFeed. The static build bakes {ago} at
+          BUILD time, which then freezes (a 35m-ago card still read "35m ago"
+          hours later, found 2026-06-06). {ago} stays as the no-JS fallback. */}
+      {a.publishedAt && (<><span>·</span><time datetime={a.publishedAt} data-ago>{ago}</time></>)}
+    </div>
+
+    <h3 class="font-semibold leading-snug mb-2 line-clamp-3 text-slate-900">
+      <a href={sourceHref} target="_blank" rel="noopener noreferrer" class="group-hover:text-sky-600">
+        {a.title}
+      </a>
+    </h3>
+
+    <div class="mt-auto pt-3 border-t border-slate-100 flex items-center justify-end text-xs text-slate-500">
+      <a href={detailHref} class="hover:text-sky-600">Read →</a>
+    </div>
+  </div>
+</article>

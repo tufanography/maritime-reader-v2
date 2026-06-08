@@ -1,0 +1,25 @@
+---
+import FilterFeed from '@/components/FilterFeed.astro';
+import { articleRepo } from '@/lib/repository/SupabaseArticleRepository';
+import { DOC_TYPES, DOC_TYPE_LABEL, type DocType } from '@/lib/taxonomy';
+
+// One static page per document_type (News / P&I Circular / Class Notice /
+// Regulation / Market Report / Casualty / PSC Report / Press release).
+// Mirrors theme/[theme].astro + segment/[segment].astro. This is the route
+// the "Types" row of the FilterBar links to — closing the v1 gap where
+// document_type had no filter page in v2.
+export async function getStaticPaths() {
+  return DOC_TYPES.map((type) => ({ params: { type } }));
+}
+
+const { type } = Astro.params as { type: DocType };
+const articles = await articleRepo.listByDocumentType(type, 100);
+const label = DOC_TYPE_LABEL[type];
+---
+<FilterFeed
+  articles={articles}
+  kicker="Type"
+  title={label}
+  subtitle={`${articles.length} visible ${label} item${articles.length === 1 ? '' : 's'}.`}
+  emptyMessage={`No visible ${label} items yet.`}
+/>

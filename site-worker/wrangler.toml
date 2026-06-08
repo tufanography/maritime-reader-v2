@@ -1,0 +1,19 @@
+name = "maritime-reader-site"
+main = "src/index.js"
+compatibility_date = "2024-11-01"
+
+# Serves the static v2 site (all 50k article HTML + filter/pagination pages +
+# the single _astro CSS + sitemap) from R2. This replaces Cloudflare Pages: R2
+# is object storage with NO file-count limit, so the 20k/100k Pages ceiling
+# does not apply.
+#
+# Bucket shared with the Pagefind index: site HTML lives at the bucket ROOT
+# (index.html, article/<id>/index.html, ...) while the search index lives
+# under the _pagefind/ prefix. They never collide — this Worker maps request
+# paths to root keys, and _pagefind/* is served separately by
+# cdn.maritimereader.com (an R2 custom domain on the same bucket), so it never
+# routes through this Worker. One bucket because the R2 API token is scoped to
+# it; a request for /_pagefind/* here would still resolve correctly anyway.
+[[r2_buckets]]
+binding = "SITE"
+bucket_name = "maritime-pagefind"

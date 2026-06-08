@@ -1,0 +1,248 @@
+---
+// Article detail page — slice 2 of the v2 frontend port (2026-05-31).
+// Mirrors v1's app/article/[id]/page.tsx STRUCTURE but applies the
+// product rule the user codified during slice-1 review:
+//
+//   "Sitemizde çok küçük haber/başlık gösteriyoruz ve gerisini source'tan
+//    okuyabilirsiniz diyoruz."
+//
+// Translation: this page never renders the body / excerpt / raw text.
+// The body lives in DB for server-side search and AI classification only.
+// What the reader sees: title + tags + a big "Read original at [Source]"
+// button that opens the publisher's page in a new tab. Aggregator pattern,
+// not a reader pattern (Google News / Apple News style).
+//
+// Visual locks (match the homepage card so the site reads as one product):
+//   - aspect-video image area
+//   - 2.2px backdrop-blur frosted-glass + white source-name watermark
+//   - same gradient-fallback when no image
+//   - same favicon-as-logo fallback when no image AND no source domain
+//
+// The big CTA button:
+//   - bg-sky-600 / hover:bg-sky-700, white text
+//   - mirrors v1's "Read full article at [source] →"
+//   - opens in new tab with rel="noopener noreferrer"
+
+import Home from '@/layouts/Home.astro';
+import HomepageMasthead from '@/components/HomepageMasthead.astro';
+import FilterBar from '@/components/FilterBar.astro';
+import { articleRepo } from '@/lib/repository/SupabaseArticleRepository';
+import { THEME_LABEL, SEGMENT_LABEL, THEMES, SEGMENTS, type Theme, type Segment } from '@/lib/taxonomy';
+import { slugify } from '@/lib/slug';
+import type { Article } from '@/lib/repository/types';
+import { ARTICLE_PAGE_LIMIT } from '@/lib/config';
+
+export async function getStaticPaths() {
+  const articles = await articleRepo.listVisible(ARTICLE_PAGE_LIMIT);
+  return articles.map((article: Article) => ({
+    params: { id: article.id },
+    props: { article },
+  }));
+}
+
+interface Props { article: Article; }
+const { article: a } = Astro.props;
+
+const themeSet = new Set<string>(THEMES);
+const segSet = new Set<string>(SEGMENTS);
+
+// Date format mirrors v1's "≈ X ago" pattern. v2 schema doesn't carry
+// published_at_confidence yet, so we don't render the ≈ marker — just
+// the absolute YYYY-MM-DD when published_at is set.
+const dateText = a.publishedAt ? a.publishedAt.slice(0, 10) : '';
+
+// Favicon fallback identical to the homepage card. Derive a domain from
+// the article URL when no image is available.
+function faviconFor(url: string | null): string | null {
+  if (!url) return null;
+  try {
+    const host = new URL(url).hostname.replace(/^www\./, '');
+    return `https://www.google.com/s2/favicons?domain=${host}&sz=128`;
+  } catch { return null; }
+}
+const faviconUrl = !a.imageUrl ? faviconFor(a.url) : null;
+const accent = '#0ea5e9';
+const gradientStyle = !a.imageUrl
+  ? `background: linear-gradient(135deg, ${accent}33, ${accent}10);`
+  : '';
+
+// The reader-click endpoint mirrors v1's /r/<id> redirector. v2 doesn't
+// have that endpoint yet — until it does, we point directly at the
+// source URL. Click-tracking is a slice-3 concern (Cloudflare Worker
+// + DB write).
+const sourceHref = a.url;
+
+// Description meta: use the body excerpt's first 160 chars (page meta
+// only — NOT rendered on screen). Search engines and link unfurlers
+// want a description; the user-facing rule is unchanged.
+const desc = a.excerpt?.slice(0, 160) ?? a.title;
+---
+<Home title={a.title} description={desc}>
+  <HomepageMasthead />
+  <FilterBar />
+
+  <article class="max-w-3xl mx-auto px-4 py-8" data-pagefind-body>
+    {/* Pagefind FACETED-FILTER metadata (slice-2 filters foundation, 2026-06).
+        Hidden from view; Pagefind reads data-pagefind-filter at index time to
+        build facets so the search/filter UI can filter by segment / type /
+        theme / source — the interactive, combinable equivalent of v1's filter
+        bar, done fully client-side on the static index (no server, no DB at
+        runtime). One <span> per value (an article can have several segments/
+        themes). VERIFIED ON NEXT BUILD: Pagefind regenerates the index with
+        these facets; the FilterBar then wires to pagefind.filters()/UI. */}
+    <div hidden data-pagefind-meta-filters>
+      {a.documentType && <span data-pagefind-filter="type">{a.documentType}</span>}
+      {a.segments.filter((s) => segSet.has(s)).map((s) => (
+        <span data-pagefind-filter="segment">{SEGMENT_LABEL[s as Segment]}</span>
+      ))}
+      {a.themes.filter((t) => themeSet.has(t)).map((t) => (
+        <span data-pagefind-filter="theme">{THEME_LABEL[t as Theme]}</span>
+      ))}
+      {a.sourceName && <span data-pagefind-filter="source">{a.sourceName}</span>}
+    </div>
+
+    {/* Pagefind DISPLAY metadata (slice 2b, 2026-06-07) — returned in
+        result.meta so the client-side search/filter UI can render homepage-
+        style CompactArticleCard results (image, source, date, type) instead of
+        Pagefind's plain text list. Inline `key:value` form (value = everything
+        after the first colon, so URLs/timestamps survive). Hidden; read from
+        attributes at index time. REQUIRES a _pagefind REGEN to take effect. */}
+    <div hidden>
+      {a.imageUrl && <span data-pagefind-meta={`image:${a.imageUrl}`}></span>}
+      {a.sourceName && <span data-pagefind-meta={`source:${a.sourceName}`}></span>}
+      {a.publishedAt && <span data-pagefind-meta={`date:${a.publishedAt}`}></span>}
+      {a.documentType && <span data-pagefind-meta={`type:${a.documentType}`}></span>}
+      {/* Publisher URL (B3+, 2026-06-08) so SEARCH result cards can link the
+          image+title straight to the source in a new tab (like the homepage
+          card), instead of our /article/ detail page. "Read →" still goes to the
+          detail page. Needs a regen. */}
+      {a.url && <span data-pagefind-meta={`link:${a.url}`}></span>}
+      {/* SORT key (slice 2b, 2026-06-07): lets the search/filter UI order
+          results newest-first when there's no text query (browse mode), instead
+          of relevance (which once put a 2-week-old item atop "News"). ISO
+          timestamps sort lexicographically, so desc = newest. Needs a regen. */}
+      {a.publishedAt && <span data-pagefind-sort={`date:${a.publishedAt}`}></span>}
+    </div>
+
+    {/* FULL-TEXT SEARCH body (B3, 2026-06-08). The page shows title-only (the
+        aggregator rule), but search must match article CONTENT — measured 3–14×
+        more recall when the body is indexed (e.g. "grain" 9→128 in a 6k sample).
+        So the scraped excerpt is emitted sr-only: visually hidden (page still
+        shows only the title) yet present in the DOM so Pagefind indexes it. NOT
+        `hidden`/display:none — Pagefind SKIPS those; sr-only is rendered + indexed.
+        Inside data-pagefind-body so it joins the searchable text. Needs a regen. */}
+    {a.excerpt && <div class="sr-only">{a.excerpt}</div>}
+
+    <div class="mb-4 text-sm">
+      <a href="/" class="text-slate-500 hover:text-sky-600">← Back to latest</a>
+    </div>
+
+    {/* Meta row: doc-type + source + date. No body text appears on this
+        page beyond the title and the tags. */}
+    <div class="flex items-center gap-2 text-xs text-slate-500 mb-3 flex-wrap">
+      {a.documentType && (
+        <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide bg-sky-50 text-sky-700">
+          {a.documentType}
+        </span>
+      )}
+      {a.sourceName && (
+        <a href={`/source/${slugify(a.sourceName)}/`} class="hover:text-sky-600">{a.sourceName}</a>
+      )}
+      {dateText && (<><span>·</span><span>{dateText}</span></>)}
+    </div>
+
+    <h1 class="text-3xl font-bold leading-tight mb-6 text-slate-900" data-pagefind-meta="title">{a.title}</h1>
+
+    {/* Hero image area — same visual treatment as the homepage card so
+        the page reads as part of the same product, not a different
+        layer. backdrop-blur LOCKED at 2.2px per the homepage doctrine. */}
+    <div class="relative w-full aspect-video rounded-lg overflow-hidden mb-6 bg-slate-100" style={gradientStyle}>
+      {a.imageUrl && (
+        <img
+          src={a.imageUrl}
+          alt=""
+          referrerpolicy="no-referrer"
+          class="w-full h-full object-cover"
+        />
+      )}
+      {!a.imageUrl && faviconUrl && (
+        <img
+          src={faviconUrl}
+          alt=""
+          aria-hidden="true"
+          class="absolute inset-0 m-auto w-32 h-32 object-contain opacity-50"
+        />
+      )}
+      <div class="absolute inset-0 bg-white/10 pointer-events-none" style="backdrop-filter: blur(2.2px); -webkit-backdrop-filter: blur(2.2px);"></div>
+      <div class="absolute inset-0 flex items-center justify-center pointer-events-none">
+        <span class="text-white text-3xl md:text-4xl font-bold uppercase tracking-tight whitespace-nowrap max-w-[90%] truncate text-center px-4" style="text-shadow: 0 2px 8px rgba(0,0,0,0.95);">
+          {a.sourceName ?? 'Maritime'}
+        </span>
+      </div>
+    </div>
+
+    {/* THE BUTTON — the only reason a reader is on this page. Big, blue,
+        unambiguous; opens the publisher's page in a new tab. v1's
+        "Read full article at [source] →" pattern. */}
+    <div class="flex flex-col sm:flex-row sm:items-center gap-3 p-4 rounded-lg border border-slate-200 bg-slate-50 mb-8">
+      <a
+        href={sourceHref}
+        target="_blank"
+        rel="noopener noreferrer"
+        class="inline-flex items-center justify-center px-5 py-2.5 rounded bg-sky-600 text-white font-medium hover:bg-sky-700 transition"
+      >
+        Read full article at {a.sourceName ?? 'source'} →
+      </a>
+      <div class="text-xs text-slate-500 sm:ml-auto">
+        Opens {a.sourceName ?? 'the source'} in a new tab
+      </div>
+    </div>
+
+    {/* Tags — themes + segments as chips, linked to filter pages. */}
+    {(a.themes.length > 0 || a.segments.length > 0) && (
+      <div class="mb-8">
+        <h2 class="text-xs uppercase tracking-wide text-slate-500 mb-2">Topics &amp; segments</h2>
+        <div class="flex flex-wrap gap-2">
+          {a.themes.map((t) =>
+            themeSet.has(t) ? (
+              <a
+                href={`/theme/${t}/`}
+                class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full border border-slate-200 text-xs hover:border-sky-400 hover:text-sky-600 transition"
+              >
+                <span class="text-slate-400">#</span>{THEME_LABEL[t as Theme]}
+              </a>
+            ) : (
+              <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full border border-slate-200 text-xs text-slate-500">
+                <span class="text-slate-400">#</span>{t}
+              </span>
+            )
+          )}
+          {a.segments.map((s) =>
+            segSet.has(s) ? (
+              <a
+                href={`/segment/${s}/`}
+                class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full border border-slate-200 text-xs hover:border-sky-400 hover:text-sky-600 transition"
+              >
+                <span class="text-slate-400">#</span>{SEGMENT_LABEL[s as Segment]}
+              </a>
+            ) : (
+              <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full border border-slate-200 text-xs text-slate-500">
+                <span class="text-slate-400">#</span>{s}
+              </span>
+            )
+          )}
+        </div>
+      </div>
+    )}
+
+    {/* The body / excerpt is intentionally NOT rendered. It lives in
+        DB for full-text search (Pagefind) and AI classification only.
+        Per the user-codified rule: title-only display; everything else
+        is at the source. data-pagefind-body wraps this <article> so the
+        title + tags are still indexed for site search. */}
+
+    <div class="mt-12 pt-6 border-t border-slate-200">
+      <a href="/" class="text-sm text-slate-500 hover:text-sky-600">← Back to latest</a>
+    </div>
+  </article>
+</Home>
