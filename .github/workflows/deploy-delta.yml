@@ -10,7 +10,7 @@
 name: deploy-delta
 on:
   schedule:
-    - cron: '0 */3 * * *'   # every 3 hours (UTC)
+    - cron: '0 */2 * * *'   # every 2 hours (UTC) — R2 incremental upload makes this cheap (~97-1300 files/run, ~150k/mo << 1M free); public repo = unlimited GHA
   workflow_dispatch:         # manual run button
 # Serialize with deploy-base so the two never race the R2 manifest.
 concurrency:
