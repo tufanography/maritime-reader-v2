@@ -1,6 +1,7 @@
 ---
 import '../styles/global.css';
 import Search from '../components/Search.astro';
+import GoogleAnalytics from '../components/GoogleAnalytics.astro';
 interface Props {
   title: string;
   description?: string;
@@ -17,6 +18,7 @@ const showHeaderSearch = !(path === '/' || path.startsWith('/page/'));
 <!doctype html>
 <html lang="en" class="bg-slate-50">
   <head>
+    <GoogleAnalytics />
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{title}</title>

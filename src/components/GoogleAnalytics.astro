@@ -1,0 +1,14 @@
+---
+// Google Analytics 4 (gtag.js) — Maritime Reader.
+//   Measurement ID: G-19NLVCLLXN  (stream 14930342256, https://maritimereader.com)
+// Rendered at the very top of <head> on EVERY page via Home.astro (the single
+// shared layout — Base.astro is unused). `is:inline` is REQUIRED: it keeps the
+// snippet verbatim so Astro does NOT bundle/hoist it (which would break gtag).
+---
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-19NLVCLLXN" is:inline></script>
+<script is:inline>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+  gtag('config', 'G-19NLVCLLXN');
+</script>
