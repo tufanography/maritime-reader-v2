@@ -397,7 +397,7 @@
     },
     "cargo_damage": {
       "triggers": ["cargo damage", "damage to cargo"],
-      "related": ["wet damage", "wet damage on cargo", "heat damage", "rust damage", "cargo contamination", "cargo shortage", "cargo loss", "cargo claim"],
+      "related": ["wet damage", "wet damage on cargo", "heat damage", "rust damage", "cargo contamination", "cargo shortage"],
       "narrow": {
         "wet damage": ["wet damage on cargo", "cargo sweat", "ship sweat", "hatch cover leakage"],
         "heat damage": ["self heating cargo", "temperature damage", "soya bean cargo"],
