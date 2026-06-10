@@ -270,6 +270,7 @@ const SYNONYMS_DEPRECATED: Record<string, string[]> = {
       filters; each removable via its ×, plus a prominent Clear all */}
   <div id="sf-active" class="mt-3 hidden flex-wrap items-center gap-3 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3">
     <span id="sf-count" class="text-sm font-bold text-slate-900"></span>
+    <div id="sf-terms" class="hidden flex-wrap items-center gap-2"></div>
     <div id="sf-chips" class="flex flex-wrap gap-2"></div>
     <button id="sf-clear" class="shrink-0 inline-flex items-center px-3 py-1 rounded-full border border-rose-300 text-rose-600 text-xs font-semibold hover:bg-rose-50 transition">Clear all</button>
   </div>
@@ -353,6 +354,7 @@ const SYNONYMS_DEPRECATED: Record<string, string[]> = {
     var loadEl = document.getElementById('sf-loading');
     var activeEl = document.getElementById('sf-active');
     var countEl = document.getElementById('sf-count');
+    var termsEl = document.getElementById('sf-terms');
     var chipsEl = document.getElementById('sf-chips');
     var clearBtn = document.getElementById('sf-clear');
     var qClear = document.getElementById('sf-q-clear');
@@ -386,6 +388,20 @@ const SYNONYMS_DEPRECATED: Record<string, string[]> = {
     // Result groups for the current search (set by run()): single (ungrouped), or
     // Best + Broader. Each is a group object {streams, byDate, seen, excludeIds}.
     var curSingle = null, curBest = null, curBroader = null;
+    // ACTIVE = the current search's terms with their matched result-id sets, used for
+    // the per-card "Matched by" tags and the per-term result counts (chips + pills).
+    // Populated from the same pf.search() calls we already run (no extra searches).
+    var ACTIVE = [];
+    function resetActive() { ACTIVE = []; }
+    function addActive(term, results) {
+      if (!term) return;
+      var label = String(term).replace(/^"|"$/g, '');
+      var e = null; for (var i = 0; i < ACTIVE.length; i++) { if (ACTIVE[i].label === label) { e = ACTIVE[i]; break; } }
+      if (!e) { e = { label: label, ids: {} }; ACTIVE.push(e); }
+      for (var j = 0; j < results.length; j++) e.ids[results[j].id] = 1;
+    }
+    function matchedFor(id) { var out = []; for (var i = 0; i < ACTIVE.length; i++) if (ACTIVE[i].ids[id]) out.push(ACTIVE[i].label); return out; }
+    function activeCount(label) { for (var i = 0; i < ACTIVE.length; i++) if (ACTIVE[i].label === label) return Object.keys(ACTIVE[i].ids).length; return 0; }
     var relKey = null;       // identity (title) of the currently matched panel, or null
     var relSel = new Set();  // related/narrow terms the user has SELECTED to include
     var sortPref = null;     // null = auto (relevance for text queries); 'date' = user chose Newest
@@ -480,9 +496,16 @@ const SYNONYMS_DEPRECATED: Record<string, string[]> = {
       if (d < 365) return Math.floor(d / 30) + 'mo ago'; return Math.floor(d / 365) + 'y ago';
     }
 
-    function card(d) {
+    function card(d, matched) {
       if (!d) return ''; // defensive: a result whose data() didn't resolve is skipped, never crashes render
       var meta = d.meta || {}, f = d.filters || {};
+      var matchHtml = '';
+      if (matched && matched.length) {
+        var shownM = matched.slice(0, 3), extraM = matched.length - shownM.length;
+        matchHtml = '<span class="sf-match" title="Found via: ' + esc(matched.join(', ')) + '">' +
+          '<span class="sf-match-lbl">Matched:</span> ' + shownM.map(esc).join(' · ') +
+          (extraM > 0 ? ' <span class="sf-match-more">+' + extraM + ' more</span>' : '') + '</span>';
+      }
       var title = meta.title || 'Untitled';
       var source = meta.source || (f.source && f.source[0]) || '';
       var typeRaw = meta.type || (f.type && f.type[0]) || '';
@@ -513,8 +536,9 @@ const SYNONYMS_DEPRECATED: Record<string, string[]> = {
           '<h3 class="font-semibold leading-snug mb-2 line-clamp-3 text-slate-900">' +
             '<a href="' + esc(pub) + '" target="_blank" rel="noopener noreferrer" class="group-hover:text-sky-600">' + esc(title) + '</a>' +
           '</h3>' +
-          '<div class="mt-auto pt-3 border-t border-slate-100 flex items-center justify-end text-xs text-slate-500">' +
-            '<a href="' + esc(url) + '" class="hover:text-sky-600">Read →</a>' +
+          '<div class="mt-auto pt-3 border-t border-slate-100 flex items-center justify-between gap-2 text-xs text-slate-500">' +
+            matchHtml +
+            '<a href="' + esc(url) + '" class="hover:text-sky-600 shrink-0">Read →</a>' +
           '</div>' +
         '</div>' +
       '</article>';
@@ -702,7 +726,7 @@ const SYNONYMS_DEPRECATED: Record<string, string[]> = {
       if (!g) return 0;
       var batch = await pullGroup(g, PAGE);   // only PAGE cards reach the DOM per call
       var html = '';
-      for (var i = 0; i < batch.length; i++) html += card(batch[i].__data);
+      for (var i = 0; i < batch.length; i++) html += card(batch[i].__data, matchedFor(batch[i].id));
       containerEl.insertAdjacentHTML('beforeend', html);
       if (moreBtn) moreBtn.classList.toggle('hidden', !groupHasMore(g)); // hide if nothing left
       return batch.length;
@@ -713,6 +737,41 @@ const SYNONYMS_DEPRECATED: Record<string, string[]> = {
     // Reuses the source-dropdown's safelisted classes (JS-built → not Tailwind-scanned).
     function updateRelatedBtn() {
       if (relatedBtn) relatedBtn.textContent = 'Related terms (' + relSel.size + ') ▾';
+    }
+    // Fill the per-chip result counts from ACTIVE (set after the searches run). Counts
+    // are available for searched (selected) terms; unchecked chips show no number.
+    function updateChipCounts() {
+      if (!relatedList) return;
+      Array.prototype.forEach.call(relatedList.querySelectorAll('.sf-chip-cnt'), function (el) {
+        var c = activeCount(el.getAttribute('data-cnt'));
+        el.textContent = c ? (c.toLocaleString('en-US')) : '';
+      });
+    }
+    // Active search-term pills beside the count: the raw query + selected chips, each
+    // with its result count and an × to drop it (unchecks the chip / clears the query).
+    function renderActiveTerms() {
+      if (!termsEl) return;
+      var items = [];
+      if (sel.q && !isQuoted(sel.q)) items.push({ label: sel.q, kind: 'q' });
+      if (relKey) relSel.forEach(function (t) { items.push({ label: t, kind: 'chip' }); });
+      if (!items.length) { termsEl.innerHTML = ''; termsEl.classList.add('hidden'); termsEl.classList.remove('flex'); return; }
+      termsEl.innerHTML = items.map(function (it) {
+        var c = activeCount(it.label);
+        return '<span class="sf-term">' + esc(it.label) + (c ? ' <span class="sf-term-cnt">' + c.toLocaleString('en-US') + '</span>' : '') +
+          '<button type="button" class="sf-term-x" data-term="' + esc(it.label) + '" data-kind="' + it.kind + '" aria-label="remove">×</button></span>';
+      }).join('');
+      termsEl.classList.remove('hidden'); termsEl.classList.add('flex');
+      Array.prototype.forEach.call(termsEl.querySelectorAll('.sf-term-x'), function (btn) {
+        btn.addEventListener('click', function () {
+          var t = btn.getAttribute('data-term');
+          if (btn.getAttribute('data-kind') === 'q') { sel.q = ''; qEl.value = ''; syncQClear(); }
+          else {
+            relSel.delete(t); updateRelatedBtn();
+            if (relatedList) Array.prototype.forEach.call(relatedList.querySelectorAll('input[data-rel]'), function (cb) { if (cb.getAttribute('data-rel') === t) cb.checked = false; });
+          }
+          run();
+        });
+      });
     }
     function renderRelatedPanel(rel) {
       if (!relatedWrap) return;
@@ -728,7 +787,8 @@ const SYNONYMS_DEPRECATED: Record<string, string[]> = {
       rel.terms.forEach(function (term) {
         html += '<label class="flex items-center gap-2 text-sm py-0.5 px-1 rounded hover:bg-slate-50 cursor-pointer">' +
           '<input type="checkbox" class="accent-sky-600" data-rel="' + esc(term) + '"' + (relSel.has(term) ? ' checked' : '') + '>' +
-          '<span class="truncate">' + esc(term) + '</span></label>';
+          '<span class="truncate">' + esc(term) + '</span>' +
+          '<span class="sf-chip-cnt" data-cnt="' + esc(term) + '"></span></label>';
       });
       relatedList.innerHTML = html;
       Array.prototype.forEach.call(relatedList.querySelectorAll('input[data-rel]'), function (cb) {
@@ -811,6 +871,7 @@ const SYNONYMS_DEPRECATED: Record<string, string[]> = {
         }
       }
       var filt = filtersObj();
+      resetActive();
 
       try {
         // ===== QUOTED phrase, BROWSE, or SINGLE-WORD → one ungrouped list (no headings) =====
@@ -820,8 +881,11 @@ const SYNONYMS_DEPRECATED: Record<string, string[]> = {
           var loneWord = !!raw && !quoted && !multiWord && !singleMulti; // e.g. "anchor": one term, relevance is a choice
           var useRel = loneWord && sortPref !== 'date';
           var sOpts = { filters: filt }; if (!useRel) sOpts.sort = { date: 'desc' };
-          var sres = await Promise.all((single.length ? single : [null]).map(function (t) { return pf.search(t, sOpts); }));
+          var sterms = single.length ? single : [null];
+          var sres = await Promise.all(sterms.map(function (t) { return pf.search(t, sOpts); }));
           if (pending !== token) return;
+          sres.forEach(function (s, i) { addActive(sterms[i], s.results); });
+          updateChipCounts(); renderActiveTerms();
           curSingle = { tiers: [ sres.map(function (s) { return { results: s.results, idx: 0 }; }) ], byDate: !useRel, seen: {} };
           curBest = curBroader = null;
           var ids = {}; sres.forEach(function (s) { for (var i = 0; i < s.results.length; i++) ids[s.results[i].id] = 1; });
@@ -847,15 +911,19 @@ const SYNONYMS_DEPRECATED: Record<string, string[]> = {
         var bestIds = {};
         function toStream(s) { for (var i = 0; i < s.results.length; i++) bestIds[s.results[i].id] = 1; return { results: s.results, idx: 0 }; }
         var bestTiers = [];
-        if (rawPhrase) { var pr = await pf.search(rawPhrase, bOpts); if (pending !== token) return; bestTiers.push([toStream(pr)]); } // tier 0: exact phrase
+        if (rawPhrase) { var pr = await pf.search(rawPhrase, bOpts); if (pending !== token) return; bestTiers.push([toStream(pr)]); addActive(rawPhrase, pr.results); } // tier 0: exact phrase
         var secSearches = await Promise.all(secondary.map(function (t) { return pf.search(t, bOpts); }));
         if (pending !== token) return;
+        secSearches.forEach(function (s, i) { addActive(secondary[i], s.results); });
         if (secSearches.length) bestTiers.push(secSearches.map(toStream));         // tier 1: chip phrases
         var useRel2 = sortPref !== 'date';            // Broader: relevance default, Newest on demand
         var brByDate = !useRel2 || broad.length > 1;  // multiple broad streams → date (relevance not comparable)
         var brOpts = { filters: filt }; if (brByDate) brOpts.sort = { date: 'desc' };
-        var brSearches = await Promise.all((broad.length ? broad : [raw]).map(function (t) { return pf.search(t, brOpts); }));
+        var bterms = broad.length ? broad : [raw];
+        var brSearches = await Promise.all(bterms.map(function (t) { return pf.search(t, brOpts); }));
         if (pending !== token) return;
+        brSearches.forEach(function (s, i) { addActive(bterms[i], s.results); });
+        updateChipCounts(); renderActiveTerms();
 
         curBest = { tiers: bestTiers, byDate: true, seen: {} };
         curBroader = { tiers: [ brSearches.map(function (s) { return { results: s.results, idx: 0 }; }) ], byDate: brByDate, seen: {}, excludeIds: bestIds };
@@ -1055,6 +1123,22 @@ const SYNONYMS_DEPRECATED: Record<string, string[]> = {
     margin: 28px 0 16px;
   }
   .sf-group-sub { display: block; margin-top: 0.3rem; font-size: 0.8rem; font-weight: 500; text-transform: none; letter-spacing: 0; color: #64748b; }
+
+  /* Per-card "Matched by" tag — one truncated line, muted */
+  .sf-match { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #64748b; }
+  .sf-match-lbl { font-weight: 700; color: #94a3b8; }
+  .sf-match-more { color: #0284c7; font-weight: 600; }
+
+  /* Per-chip result count in the related dropdown */
+  .sf-chip-cnt { margin-left: auto; padding-left: 0.5rem; font-size: 0.72rem; color: #94a3b8; font-variant-numeric: tabular-nums; }
+
+  /* Active search-term pills near the result count (label + count + remove ×) */
+  .sf-term { display: inline-flex; align-items: center; gap: 0.3rem; padding: 0.2rem 0.3rem 0.2rem 0.6rem;
+    border-radius: 9999px; background: #eff6ff; border: 1px solid #bfdbfe; color: #1e40af; font-size: 0.75rem; white-space: nowrap; }
+  .sf-term-cnt { font-weight: 700; font-variant-numeric: tabular-nums; opacity: 0.8; }
+  .sf-term-x { display: inline-flex; align-items: center; justify-content: center; width: 1.1rem; height: 1.1rem;
+    border-radius: 9999px; border: none; background: none; color: #60a5fa; font-size: 0.95rem; line-height: 1; cursor: pointer; }
+  .sf-term-x:hover { background: #dbeafe; color: #1e3a8a; }
 
   /* Active-filter pills — bigger, easy × target. */
   .sf-pill {
