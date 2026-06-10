@@ -395,8 +395,18 @@
         "LNG carrier": ["liquefied natural gas carrier", "boil off gas", "membrane tank", "Moss tank"]
       }
     },
+    "cargo_damage": {
+      "triggers": ["cargo damage", "damage to cargo"],
+      "related": ["wet damage", "wet damage on cargo", "heat damage", "rust damage", "cargo contamination", "cargo shortage", "cargo loss", "cargo claim"],
+      "narrow": {
+        "wet damage": ["wet damage on cargo", "cargo sweat", "ship sweat", "hatch cover leakage"],
+        "heat damage": ["self heating cargo", "temperature damage", "soya bean cargo"],
+        "rust damage": ["steel cargo damage", "pre shipment rust", "salt water damage"],
+        "cargo contamination": ["dirty cargo", "previous cargo residue", "hold contamination"]
+      }
+    },
     "main_engine": {
-      "triggers": ["main engine", "main engine failure", "engine breakdown"],
+      "triggers": ["main engine", "main engine damage", "main engine failure", "engine breakdown"],
       "related": ["main engine damage", "main engine breakdown", "main engine failure", "loss of propulsion", "engine room casualty", "slow steaming", "engine derating", "engine power limitation", "EPL", "ME cylinder liner", "piston ring damage", "piston crown damage", "crankshaft damage", "bearing damage", "main bearing failure", "crankpin bearing", "turbocharger failure", "fuel pump failure", "exhaust valve damage", "scavenge fire", "jacket cooling water", "lubricating oil pressure", "engine alarm", "engine shutdown"],
       "narrow": {
         "main engine failure": ["loss of propulsion", "engine shutdown", "engine room casualty", "towage assistance"],

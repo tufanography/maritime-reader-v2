@@ -285,7 +285,19 @@ const SYNONYMS_DEPRECATED: Record<string, string[]> = {
     <button id="sf-sort-rel" type="button" class="sf-sort-btn on">Relevance</button>
     <button id="sf-sort-date" type="button" class="sf-sort-btn">Newest</button>
   </div>
-  <div id="sf-results" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4"></div>
+  {/* Grouped results: Best matches (exact phrase / topic) then Broader matches (words appear separately) */}
+  <div id="sf-best-wrap" class="hidden">
+    <h3 class="sf-group-label">Best matches</h3>
+    <div id="sf-best" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4"></div>
+    <div class="mt-4 mb-8 text-center"><button id="sf-best-more" class="hidden px-4 py-2 rounded-lg border border-slate-300 text-sm text-slate-700 hover:border-slate-400">Load more</button></div>
+  </div>
+  <div id="sf-broader-wrap" class="hidden">
+    <h3 class="sf-group-label">Broader matches <span class="sf-group-sub">— words appear separately; may be less on-topic</span></h3>
+    <div id="sf-broader" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4"></div>
+    <div class="mt-4 text-center"><button id="sf-broader-more" class="hidden px-4 py-2 rounded-lg border border-slate-300 text-sm text-slate-700 hover:border-slate-400">Load more</button></div>
+  </div>
+  {/* Ungrouped results (single-word / quoted queries) */}
+  <div id="sf-results" class="hidden grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4"></div>
   <div class="mt-6 text-center">
     <button id="sf-more" class="hidden px-4 py-2 rounded-lg border border-slate-300 text-sm text-slate-700 hover:border-slate-400">Load more</button>
     <p id="sf-empty" class="hidden p-12 text-sm text-slate-600">No results match your search and filters.</p>
@@ -351,6 +363,12 @@ const SYNONYMS_DEPRECATED: Record<string, string[]> = {
     var sortWrap = document.getElementById('sf-sort');
     var sortRelBtn = document.getElementById('sf-sort-rel');
     var sortDateBtn = document.getElementById('sf-sort-date');
+    var bestWrap = document.getElementById('sf-best-wrap');
+    var bestEl = document.getElementById('sf-best');
+    var bestMore = document.getElementById('sf-best-more');
+    var broaderWrap = document.getElementById('sf-broader-wrap');
+    var broaderEl = document.getElementById('sf-broader');
+    var broaderMore = document.getElementById('sf-broader-more');
     if (!qEl) return;
 
     // Custom search-clear × (native type=search × is hidden in is:global; it
@@ -364,12 +382,12 @@ const SYNONYMS_DEPRECATED: Record<string, string[]> = {
 
     var pf = null, pending = null, debounce = null;
     var sel = { q: '', type: new Set(), segment: new Set(), theme: new Set(), source: new Set() };
-    var streams = [], shown = 0; // streams: one date-sorted result list per search term (raw + expansions)
-    var seenUrls = {};   // dedup base+delta overlap AND cross-term overlap, by url, at render
+    // Result groups for the current search (set by run()): single (ungrouped), or
+    // Best + Broader. Each is a group object {streams, byDate, seen, excludeIds}.
+    var curSingle = null, curBest = null, curBroader = null;
     var relKey = null;       // identity (title) of the currently matched panel, or null
     var relSel = new Set();  // related/narrow terms the user has SELECTED to include
     var sortPref = null;     // null = auto (relevance for text queries); 'date' = user chose Newest
-    var mergeByDate = true;  // set per-run: true = date k-way merge, false = relevance order
 
     // 3-layer maritime search map (Phase A 2026-06-10): loaded at runtime from a
     // static JSON (/maritime-search-map.json) — NOT inlined into the HTML. Matching:
@@ -406,9 +424,11 @@ const SYNONYMS_DEPRECATED: Record<string, string[]> = {
       if (!q || isQuoted(q) || !MAP) return null;
       var t = norm(q);
       if (!t) return null;
-      if (TRIGGERS[t]) { var m = TRIGGERS[t]; return { title: m.label, terms: filterBlocked(MAP[m.topic].related) }; }
-      if (NARROW[t]) { var nn = NARROW[t]; return { title: nn.key, terms: filterBlocked(MAP[nn.topic].narrow[nn.key]) }; }
-      if (RELATED[t]) { var rr = RELATED[t]; var nar = MAP[rr.topic].narrow && MAP[rr.topic].narrow[rr.term]; return nar ? { title: rr.term, terms: filterBlocked(nar) } : null; }
+      // seeds = strong "Best" seed phrases the match itself implies (topic triggers,
+      // or the matched narrow/related key) — fed into Best alongside the selected chips.
+      if (TRIGGERS[t]) { var m = TRIGGERS[t]; return { title: m.label, terms: filterBlocked(MAP[m.topic].related), seeds: (MAP[m.topic].triggers || []).slice() }; }
+      if (NARROW[t]) { var nn = NARROW[t]; return { title: nn.key, terms: filterBlocked(MAP[nn.topic].narrow[nn.key]), seeds: [nn.key] }; }
+      if (RELATED[t]) { var rr = RELATED[t]; var nar = MAP[rr.topic].narrow && MAP[rr.topic].narrow[rr.term]; return nar ? { title: rr.term, terms: filterBlocked(nar), seeds: [rr.term] } : null; }
       // A broad single word ("cargo", "inspection", "crew"...) must NOT prefix-expand
       // into some topic ("cargo" → "cargo tank"). Exact triggers were already handled
       // above, so a blocked word that is also a real trigger (e.g. "pollution") still works.
@@ -416,7 +436,7 @@ const SYNONYMS_DEPRECATED: Record<string, string[]> = {
       if (t.length >= 3) {
         var best = null;
         for (var i = 0; i < TRIGGER_NORMS.length; i++) { var tn = TRIGGER_NORMS[i]; if (tn.indexOf(t) === 0 && (!best || tn.length < best.length)) best = tn; }
-        if (best) { var bm = TRIGGERS[best]; return { title: bm.label, terms: filterBlocked(MAP[bm.topic].related) }; }
+        if (best) { var bm = TRIGGERS[best]; return { title: bm.label, terms: filterBlocked(MAP[bm.topic].related), seeds: (MAP[bm.topic].triggers || []).slice() }; }
       }
       return null;
     }
@@ -629,7 +649,7 @@ const SYNONYMS_DEPRECATED: Record<string, string[]> = {
                function () { if (!done) { done = true; clearTimeout(t); resolve(); } });
       });
     }
-    async function resolveHeads() {
+    function resolveHeads(streams) {
       var jobs = [];
       streams.forEach(function (s) {
         var r = s.results[s.idx];
@@ -637,48 +657,50 @@ const SYNONYMS_DEPRECATED: Record<string, string[]> = {
           jobs.push(withTimeout(r.data().then(function (d) { r.__data = d; }), 8000));
         }
       });
-      if (jobs.length) await Promise.all(jobs);
+      return jobs.length ? Promise.all(jobs) : Promise.resolve();
     }
     function dateOf(r) {
       var d = r && r.__data && r.__data.meta ? r.__data.meta.date : null;
       var t = d ? new Date(d).getTime() : NaN;
       return isNaN(t) ? -Infinity : t; // undated sinks to the bottom
     }
-    // Pull the next `n` de-duplicated results. mergeByDate=true → globally
-    // date-newest across streams (k-way merge, for browse + multi-term chip merges).
-    // mergeByDate=false → walk the single stream in Pagefind's RELEVANCE order
-    // (text query with no chip expansion; relevance scores aren't comparable across
-    // different search terms, so relevance is only used when there is one stream).
-    async function pullNext(n) {
+    // A "group" = { streams:[{results,idx}], byDate, seen:{}, excludeIds:{} }.
+    // pullGroup pulls the next `n` de-duplicated results from ONE group:
+    //   byDate=true  → globally date-newest across the group's streams (k-way merge).
+    //   byDate=false → walk the single stream in Pagefind RELEVANCE order.
+    // excludeIds (Broader only) drops results that already belong to Best (by id).
+    async function pullGroup(g, n) {
       var out = [];
       while (out.length < n) {
-        await resolveHeads();
-        var best = -1, bestT = 0;
-        for (var i = 0; i < streams.length; i++) {
-          var r = streams[i].results[streams[i].idx];
+        await resolveHeads(g.streams);
+        var pick = -1, bestT = 0;
+        for (var i = 0; i < g.streams.length; i++) {
+          var r = g.streams[i].results[g.streams[i].idx];
           if (!r) continue;
-          if (!mergeByDate) { best = i; break; } // relevance: first stream with items, in order
+          if (!g.byDate) { pick = i; break; } // relevance: first stream with items, in order
           var t = dateOf(r);
-          if (best === -1 || t > bestT) { best = i; bestT = t; }
+          if (pick === -1 || t > bestT) { pick = i; bestT = t; }
         }
-        if (best === -1) break; // all streams exhausted
-        var s = streams[best];
+        if (pick === -1) break; // all streams exhausted
+        var s = g.streams[pick];
         var chosen = s.results[s.idx];
-        s.idx++; // advance even on a dup, so the merge always makes progress
+        s.idx++; // advance even on a skip, so the merge always makes progress
+        if (g.excludeIds && chosen.id && g.excludeIds[chosen.id]) continue; // already in Best
         var u = chosen.__data && chosen.__data.url;
-        if (u) { if (seenUrls[u]) continue; seenUrls[u] = 1; }
+        if (u) { if (g.seen[u]) continue; g.seen[u] = 1; }
         out.push(chosen);
       }
       return out;
     }
-    async function renderMore() {
-      var batch = await pullNext(PAGE);
+    function groupHasMore(g) { return !!g && g.streams.some(function (s) { return s.idx < s.results.length; }); }
+    async function renderGroup(g, containerEl, moreBtn) {
+      if (!g) return 0;
+      var batch = await pullGroup(g, PAGE);
       var html = '';
       for (var i = 0; i < batch.length; i++) html += card(batch[i].__data);
-      resultsEl.insertAdjacentHTML('beforeend', html);
-      shown += batch.length;
-      var hasMore = streams.some(function (s) { return s.idx < s.results.length; });
-      moreBtn.classList.toggle('hidden', !hasMore);
+      containerEl.insertAdjacentHTML('beforeend', html);
+      if (moreBtn) moreBtn.classList.toggle('hidden', !groupHasMore(g));
+      return batch.length;
     }
     // Related-terms checkbox panel for the matched key. All ON by default; toggling
     // a checkbox updates relSel + re-runs. Rebuilt only when the key changes (so the
@@ -726,15 +748,22 @@ const SYNONYMS_DEPRECATED: Record<string, string[]> = {
       resultsWrap.classList.toggle('hidden', !active);
       activeEl.classList.toggle('hidden', !active);
       activeEl.classList.toggle('flex', active);
-      if (!active) { resultsEl.innerHTML = ''; streams = []; shown = 0; relKey = null; relSel = new Set(); renderRelatedPanel(null); if (loadEl) loadEl.classList.add('hidden'); return; }
+      function clearResults() {
+        resultsEl.innerHTML = ''; resultsEl.classList.add('hidden'); if (moreBtn) moreBtn.classList.add('hidden');
+        if (bestEl) bestEl.innerHTML = ''; if (broaderEl) broaderEl.innerHTML = '';
+        if (bestWrap) bestWrap.classList.add('hidden'); if (broaderWrap) broaderWrap.classList.add('hidden');
+        if (bestMore) bestMore.classList.add('hidden'); if (broaderMore) broaderMore.classList.add('hidden');
+      }
+      if (!active) {
+        clearResults(); curSingle = curBest = curBroader = null; relKey = null; relSel = new Set();
+        renderRelatedPanel(null); if (sortWrap) sortWrap.classList.add('hidden'); if (loadEl) loadEl.classList.add('hidden');
+        return;
+      }
 
-      // Show the loading state IMMEDIATELY so a search/filter never looks like a
-      // blank/broken screen during the wait (cold cdn index load measured ~9.5s
-      // first time, ~1.6s warm). Cleared once results render.
-      resultsEl.innerHTML = ''; shown = 0; seenUrls = {};
+      // Loading state IMMEDIATELY (cold cdn index load ~9.5s first time, ~1.6s warm).
+      clearResults();
       emptyEl.classList.add('hidden');
       if (loadEl) loadEl.classList.remove('hidden');
-
       var token = {}; pending = token;
 
       // Related-terms dropdown: prefix-match the typed text to a synonym key.
@@ -750,54 +779,94 @@ const SYNONYMS_DEPRECATED: Record<string, string[]> = {
         renderRelatedPanel(rel);
         if (rel && relatedPanel) relatedPanel.classList.remove('hidden'); // auto-open on a new match
       }
-      var terms = [sel.q];
-      if (rel) rel.terms.forEach(function (t) { if (relSel.has(t)) terms.push(/\s/.test(t) ? '"' + t + '"' : t); });
-
-      // SORT MODE (user 2026-06-10): a text query defaults to RELEVANCE so loose
-      // word-matches don't float to the top by date (the "cargo damage" → unrelated
-      // article problem — "cargo" + "damage" matched in scattered/boilerplate text).
-      // Relevance only when there is exactly ONE stream (no chip expansion) — across
-      // multiple terms Pagefind relevance scores aren't comparable, and browse/no-query
-      // has no relevance signal, so those keep date. A visible "Relevance | Newest"
-      // toggle lets the user force date on a plain text query. Quoted = exact (Pagefind).
-      var hasQuery = !!sel.q;
-      var canRelevance = hasQuery && terms.length === 1;   // relevance is meaningful here
-      var useRelevance = canRelevance && sortPref !== 'date';
-      mergeByDate = !useRelevance;
-      if (sortWrap) {
-        sortWrap.classList.toggle('hidden', !canRelevance);
-        if (sortRelBtn) sortRelBtn.className = sortBtnClass(useRelevance);
-        if (sortDateBtn) sortDateBtn.className = sortBtnClass(!useRelevance);
+      // ---- Term sets: strong = multi-word phrases (Best); broad = words/AND (Broader base) ----
+      var raw = sel.q;
+      var quoted = isQuoted(raw);
+      var multiWord = !!raw && /\s/.test(raw.trim());
+      function isPhrase(t) { return /\s/.test(t); }
+      function addU(arr, t) { if (t && arr.indexOf(t) === -1) arr.push(t); }
+      var strong = [], broad = [];
+      if (!quoted) {
+        if (raw) { if (multiWord) addU(strong, '"' + raw + '"'); addU(broad, raw); }
+        if (rel) {
+          (rel.seeds || []).forEach(function (t) { if (isPhrase(t)) addU(strong, '"' + t + '"'); else addU(broad, t); });
+          rel.terms.forEach(function (t) { if (relSel.has(t)) { if (isPhrase(t)) addU(strong, '"' + t + '"'); else addU(broad, t); } });
+        }
       }
-      var opts = { filters: filtersObj() };
-      if (!useRelevance) opts.sort = { date: 'desc' };
+      var filt = filtersObj();
 
-      var searches;
-      try { searches = await Promise.all(terms.map(function (t) { return pf.search(t || null, opts); })); }
-      catch (e) { searches = null; }
-      if (pending !== token) return; // a newer search will manage the loading state
-      if (!searches) { if (loadEl) loadEl.classList.add('hidden'); return; }
+      try {
+        // ===== QUOTED exact phrase, or NO strong phrases → SINGLE ungrouped group =====
+        if (quoted || strong.length === 0) {
+          var single = quoted ? [raw] : broad;
+          var singleMulti = single.length > 1;
+          var useRel = !!raw && !quoted && !singleMulti && !multiWord && sortPref !== 'date'; // relevance for a lone word
+          var sOpts = { filters: filt }; if (!useRel) sOpts.sort = { date: 'desc' };
+          var sres = await Promise.all((single.length ? single : [null]).map(function (t) { return pf.search(t, sOpts); }));
+          if (pending !== token) return;
+          curSingle = { streams: sres.map(function (s) { return { results: s.results, idx: 0 }; }), byDate: !useRel, seen: {} };
+          curBest = curBroader = null;
+          var ids = {}; sres.forEach(function (s) { for (var i = 0; i < s.results.length; i++) ids[s.results[i].id] = 1; });
+          var stotal = Object.keys(ids).length;
+          countEl.textContent = stotal.toLocaleString('en-US') + ' result' + (stotal === 1 ? '' : 's');
+          if (sortWrap) {
+            var canRel = !!raw && !quoted && !singleMulti && !multiWord;
+            sortWrap.classList.toggle('hidden', !canRel || stotal === 0);
+            if (sortRelBtn) sortRelBtn.className = sortBtnClass(useRel);
+            if (sortDateBtn) sortDateBtn.className = sortBtnClass(!useRel);
+          }
+          resultsEl.classList.remove('hidden');
+          try { await renderGroup(curSingle, resultsEl, moreBtn); } catch (e) {}
+          if (pending !== token) return;
+          if (loadEl) loadEl.classList.add('hidden');
+          emptyEl.classList.toggle('hidden', stotal > 0);
+          return;
+        }
 
-      streams = searches.map(function (s) { return { results: s.results, idx: 0 }; });
+        // ===== GROUPED: Best (strong phrases, newest-first) + Broader (broad − Best) =====
+        var bOpts = { filters: filt, sort: { date: 'desc' } };
+        var bestSearches = await Promise.all(strong.map(function (t) { return pf.search(t, bOpts); }));
+        if (pending !== token) return;
+        var bestIds = {};
+        var bestStreams = bestSearches.map(function (s) {
+          for (var i = 0; i < s.results.length; i++) bestIds[s.results[i].id] = 1;
+          return { results: s.results, idx: 0 };
+        });
+        var useRel2 = sortPref !== 'date';            // Broader: relevance default, Newest on demand
+        var brByDate = !useRel2 || broad.length > 1;  // multiple broad streams → date (relevance not comparable)
+        var brOpts = { filters: filt }; if (brByDate) brOpts.sort = { date: 'desc' };
+        var brSearches = await Promise.all((broad.length ? broad : [raw]).map(function (t) { return pf.search(t, brOpts); }));
+        if (pending !== token) return;
 
-      // Count = unique fragment ids across all streams (cheap, no data()). Base/
-      // delta overlap leaves the same ~1% inflation the single-search path had.
-      var idset = {};
-      streams.forEach(function (s) { for (var i = 0; i < s.results.length; i++) idset[s.results[i].id] = 1; });
-      var total = Object.keys(idset).length;
-      countEl.textContent = total.toLocaleString('en-US') + ' result' + (total === 1 ? '' : 's');
-      if (sortWrap && total === 0) sortWrap.classList.add('hidden'); // nothing to sort
+        curBest = { streams: bestStreams, byDate: true, seen: {} };
+        curBroader = { streams: brSearches.map(function (s) { return { results: s.results, idx: 0 }; }), byDate: brByDate, seen: {}, excludeIds: bestIds };
+        curSingle = null;
 
+        var bestCount = Object.keys(bestIds).length;
+        var brIds = {}; brSearches.forEach(function (s) { for (var i = 0; i < s.results.length; i++) { var id = s.results[i].id; if (!bestIds[id]) brIds[id] = 1; } });
+        var brCount = Object.keys(brIds).length;
+        var total = bestCount + brCount;
+        countEl.textContent = total.toLocaleString('en-US') + ' result' + (total === 1 ? '' : 's');
 
+        if (sortWrap) {  // toggle controls the Broader group's order
+          sortWrap.classList.toggle('hidden', brCount === 0);
+          if (sortRelBtn) sortRelBtn.className = sortBtnClass(useRel2);
+          if (sortDateBtn) sortDateBtn.className = sortBtnClass(!useRel2);
+        }
 
-      // A data()/render failure must never blank the feed — render whatever resolved.
-      try { await renderMore(); } catch (e) {}
-      if (pending !== token) return;
-      if (loadEl) loadEl.classList.add('hidden');
-      emptyEl.classList.toggle('hidden', total > 0);
+        if (bestCount > 0) { bestWrap.classList.remove('hidden'); try { await renderGroup(curBest, bestEl, bestMore); } catch (e) {} }
+        if (pending !== token) return;
+        if (brCount > 0) { broaderWrap.classList.remove('hidden'); try { await renderGroup(curBroader, broaderEl, broaderMore); } catch (e) {} }
+        if (pending !== token) return;
+
+        if (loadEl) loadEl.classList.add('hidden');
+        emptyEl.classList.toggle('hidden', total > 0);
+      } catch (e) { if (loadEl) loadEl.classList.add('hidden'); }
     }
 
-    moreBtn.addEventListener('click', async function () { await renderMore(); });
+    moreBtn.addEventListener('click', async function () { await renderGroup(curSingle, resultsEl, moreBtn); });
+    if (bestMore) bestMore.addEventListener('click', async function () { await renderGroup(curBest, bestEl, bestMore); });
+    if (broaderMore) broaderMore.addEventListener('click', async function () { await renderGroup(curBroader, broaderEl, broaderMore); });
     // Sort toggle: Relevance (default for text queries) vs Newest (date).
     if (sortRelBtn) sortRelBtn.addEventListener('click', function () { if (sortPref !== null) { sortPref = null; run(); } });
     if (sortDateBtn) sortDateBtn.addEventListener('click', function () { if (sortPref !== 'date') { sortPref = 'date'; run(); } });
@@ -959,6 +1028,14 @@ const SYNONYMS_DEPRECATED: Record<string, string[]> = {
   }
   .sf-sort-btn:hover { border-color: #94a3b8; }
   .sf-sort-btn.on { background: #0f172a; color: #fff; border-color: #0f172a; }
+
+  /* Group section headers (Best matches / Broader matches) */
+  .sf-group-label {
+    font-size: 0.95rem; font-weight: 700; color: #0f172a;
+    margin: 0.25rem 0 0.9rem; padding-bottom: 0.35rem;
+    border-bottom: 2px solid #e2e8f0;
+  }
+  .sf-group-sub { font-size: 0.72rem; font-weight: 500; color: #94a3b8; }
 
   /* Active-filter pills — bigger, easy × target. */
   .sf-pill {
