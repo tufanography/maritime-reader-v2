@@ -790,27 +790,35 @@ const SYNONYMS_DEPRECATED: Record<string, string[]> = {
       var multiWord = !!raw && /\s/.test(raw.trim());
       function isPhrase(t) { return /\s/.test(t); }
       function addU(arr, t) { if (t && arr.indexOf(t) === -1) arr.push(t); }
-      var strong = [], broad = [];
+      var strong = [], broad = [], singleTerms = [];
       if (!quoted) {
-        if (raw) { if (multiWord) addU(strong, '"' + raw + '"'); addU(broad, raw); }
-        if (rel) {
-          // Seeds = topic trigger forms: multi-word expansions are strong (Best);
-          // a single-word seed is the broad raw token (e.g. "grain", "psc") → Broader base.
-          (rel.seeds || []).forEach(function (t) { if (isPhrase(t)) addU(strong, '"' + t + '"'); else addU(broad, t); });
-          // Selected CHIPS are curated, specific terms → ALWAYS Best, single-word too
-          // (e.g. grain's "wheat"/"soybean" are specific commodities, not broad noise;
-          // broad words are already filtered out of chips via blockedSingleWordRelatedTerms).
-          rel.terms.forEach(function (t) { if (relSel.has(t)) addU(strong, isPhrase(t) ? '"' + t + '"' : t); });
+        if (multiWord) {
+          // MULTI-WORD → grouped. Best = exact phrase + multi-word seeds + selected chips; Broader = raw AND.
+          if (raw) { addU(strong, '"' + raw + '"'); addU(broad, raw); }
+          if (rel) {
+            (rel.seeds || []).forEach(function (t) { if (isPhrase(t)) addU(strong, '"' + t + '"'); });
+            rel.terms.forEach(function (t) { if (relSel.has(t)) addU(strong, isPhrase(t) ? '"' + t + '"' : t); });
+          }
+        } else if (raw) {
+          // SINGLE WORD → ONE merged list, NO Best/Broader split (a single word can't
+          // "scatter", so the split only confuses — user 2026-06-11, the "grain" case).
+          // List = raw word + topic trigger forms + selected chips; chips still apply.
+          addU(singleTerms, raw);
+          if (rel) {
+            (rel.seeds || []).forEach(function (t) { addU(singleTerms, isPhrase(t) ? '"' + t + '"' : t); });
+            rel.terms.forEach(function (t) { if (relSel.has(t)) addU(singleTerms, isPhrase(t) ? '"' + t + '"' : t); });
+          }
         }
       }
       var filt = filtersObj();
 
       try {
-        // ===== QUOTED exact phrase, or NO strong phrases → SINGLE ungrouped group =====
-        if (quoted || strong.length === 0) {
-          var single = quoted ? [raw] : broad;
+        // ===== QUOTED phrase, BROWSE, or SINGLE-WORD → one ungrouped list (no headings) =====
+        if (quoted || !multiWord) {
+          var single = quoted ? [raw] : singleTerms;
           var singleMulti = single.length > 1;
-          var useRel = !!raw && !quoted && !singleMulti && !multiWord && sortPref !== 'date'; // relevance for a lone word
+          var loneWord = !!raw && !quoted && !multiWord && !singleMulti; // e.g. "anchor": one term, relevance is a choice
+          var useRel = loneWord && sortPref !== 'date';
           var sOpts = { filters: filt }; if (!useRel) sOpts.sort = { date: 'desc' };
           var sres = await Promise.all((single.length ? single : [null]).map(function (t) { return pf.search(t, sOpts); }));
           if (pending !== token) return;
@@ -820,8 +828,7 @@ const SYNONYMS_DEPRECATED: Record<string, string[]> = {
           var stotal = Object.keys(ids).length;
           countEl.textContent = stotal.toLocaleString('en-US') + ' result' + (stotal === 1 ? '' : 's');
           if (sortWrap) {
-            var canRel = !!raw && !quoted && !singleMulti && !multiWord;
-            sortWrap.classList.toggle('hidden', !canRel || stotal === 0);
+            sortWrap.classList.toggle('hidden', !loneWord || stotal === 0);
             if (sortRelBtn) sortRelBtn.className = sortBtnClass(useRel);
             if (sortDateBtn) sortDateBtn.className = sortBtnClass(!useRel);
           }
