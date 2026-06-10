@@ -16,12 +16,196 @@
 //  - SOURCE is a dropdown (57 values) not a chip wall — matches v1; also removes
 //    the per-keystroke 57-chip rebuild.
 //  - Phrase search already works (Pagefind native): "exact phrase" in quotes.
+//  - SYNONYM EXPANSION (2026-06-10): the typed text is matched to a SYNONYMS key —
+//    exact, else the shortest key that STARTS WITH it ("speed" → "speed claim"). Its
+//    related terms open in a checkbox DROPDOWN under the box (auto-opens on a new
+//    match, closes on outside-click, reopen via the button) — ALL checked by default;
+//    only CHECKED terms are searched alongside the raw query (live). Streams are
+//    k-way merged in pure date order, deduped by url. A quoted query gets no panel.
 //
 // Self-contained; does NOT touch Search.astro (header search on other pages).
 // Card classes are COPIED from CompactArticleCard.astro so Tailwind (which does
 // NOT scan strings built in this is:inline script) has already emitted them.
 
 const base = (import.meta.env.PUBLIC_PAGEFIND_BASE ?? '').replace(/\/$/, '');
+
+// Synonym / related-terms map for client-side query expansion (2026-06-10).
+// When the typed query EXACTLY equals a key (lowercased, not a quoted phrase),
+// the client also searches the listed related terms and merges the results —
+// so "PSC" also surfaces "port state control" articles. Directed (key → values),
+// used as authored; not auto-reversed. Multi-word related terms are searched as
+// exact phrases at runtime. Shown as toggleable chips (all on by default); only
+// the user-selected terms are searched. Maritime acronyms + cargo / vessel-type /
+// charter-party / P&I / port / performance-claim / narcotics domains.
+const SYNONYMS: Record<string, string[]> = {
+  // 1. Abbreviations
+  'psc': ["port state control", "port state inspection", "PSC detention", "PSC deficiency", "Paris MOU", "Tokyo MOU", "USCG"],
+  'ism': ["international safety management", "safety management system", "ISM code", "ISM audit", "ISM certificate"],
+  'solas': ["safety of life at sea", "life saving appliance", "fire safety", "SOLAS chapter", "SOLAS certificate"],
+  'marpol': ["marine pollution", "oil discharge", "MARPOL annex", "sulphur limit", "emission control"],
+  'mlc': ["maritime labour convention", "seafarer rights", "crew welfare", "MLC certificate", "MLC inspection"],
+  'stcw': ["standards of training certification watchkeeping", "STCW certificate", "STCW competency", "watch officer"],
+  'isps': ["port security", "ship security plan", "SSO", "CSO", "ISPS code", "security assessment"],
+  'ism code': ["ISM", "safety management system", "SMS", "ISM audit", "ISM certificate"],
+  'cii': ["carbon intensity indicator", "CII rating", "CII improvement", "carbon efficiency"],
+  'eexi': ["energy efficiency existing ship index", "EEXI certificate", "EEXI compliance"],
+  'eca': ["emission control area", "sulphur limit", "SECA", "NECA", "low sulphur fuel", "ECA compliance"],
+  'p&i': ["protection and indemnity", "P&I club", "P&I cover", "mutual insurance", "international group"],
+  'h&m': ["hull and machinery", "hull insurance", "hull damage", "hull repair"],
+  'fdd': ["freight demurrage defence", "FDD cover", "legal costs", "dispute resolution"],
+  'ga': ["general average", "York Antwerp Rules", "GA contribution", "average bond", "average guarantee"],
+  'loi': ["letter of indemnity", "LOI wording", "original bill of lading", "indemnity letter"],
+  'lof': ["Lloyd's open form", "salvage agreement", "wreck removal", "SCOPIC"],
+  'nor': ["notice of readiness", "NOR tendering", "WIPON", "WIBON", "laytime commencement"],
+  'b/l': ["bill of lading", "clean bill", "switch bill", "original bill of lading", "bills of lading"],
+  'cp': ["charter party", "charterparty", "fixture recap", "charter agreement"],
+  'laycan': ["laydays cancelling", "cancellation date", "vessel arrival", "laycan spread"],
+  'dem': ["demurrage", "laytime exceeded", "demurrage claim", "demurrage calculation"],
+  'desp': ["despatch", "saved laytime", "half despatch", "despatch money"],
+  'vlsfo': ["very low sulphur fuel oil", "0.5% sulphur", "compliant fuel", "VLSFO quality"],
+  'hsfo': ["high sulphur fuel oil", "scrubber vessel", "open loop scrubber", "HSFO price"],
+  'lsmgo': ["low sulphur marine gas oil", "distillate fuel", "LSMGO quality"],
+  'mgo': ["marine gas oil", "distillate fuel", "MGO price", "MGO quality"],
+  'ifo': ["intermediate fuel oil", "heavy fuel oil", "bunker fuel", "IFO 380"],
+  'dlosp': ["dropping last outward sea pilot", "pilot station", "laytime commencement"],
+  'aaaa': ["always afloat always accessible", "safe anchorage", "safe berth"],
+  'afsps': ["arrival first sea pilot station", "pilot boarding", "laytime commencement"],
+  'wibon': ["whether in berth or not", "laytime counting", "NOR validity"],
+  'wipon': ["whether in port or not", "laytime counting", "NOR validity"],
+  'wifon': ["whether in free pratique or not", "free pratique", "health clearance"],
+  'shinc': ["sundays holidays included", "laytime counting", "running days"],
+  'shex': ["sundays holidays excepted", "laytime counting", "working days"],
+  'fhex': ["fridays holidays excepted", "laytime counting", "working days"],
+  'fhinc': ["fridays holidays included", "laytime counting", "running days"],
+  'pwwd': ["per weather working day", "weather working day", "laytime counting"],
+  'wwd': ["weather working day", "laytime counting", "weather factor"],
+  'hdwts': ["half dispatch on working time saved", "despatch calculation", "laytime saved"],
+  'moloo': ["more or less owner's option", "quantity tolerance", "cargo quantity"],
+  'molchopt': ["more or less charterer's option", "quantity tolerance", "cargo quantity"],
+  'naabsa': ["not always afloat but safely aground", "tidal berth", "safe aground"],
+  'cqd': ["customary quick dispatch", "dispatch rate", "port custom"],
+  'pdpr': ["per day pro rata", "demurrage rate", "hire rate"],
+  'lilo': ["liner in liner out", "freight terms", "loading discharging terms"],
+  'filo': ["free in liner out", "freight terms", "loading discharging terms"],
+  'lifo': ["liner in free out", "freight terms", "loading discharging terms"],
+  'fifo': ["free in free out", "freight terms", "loading discharging terms"],
+  'bends': ["both ends", "loading port discharging port", "charter party terms"],
+  'imo': ["international maritime organization", "IMO resolution", "IMO circular", "IMO convention"],
+  'bimco': ["Baltic international maritime council", "BIMCO clause", "standard contract", "BIMCO form"],
+  'iacs': ["international association classification societies", "class society", "IACS member"],
+  'dnv': ["Det Norske Veritas", "DNV class", "DNV survey", "DNV certificate"],
+  'lr': ["Lloyd's Register", "LR class", "LR survey", "LR certificate"],
+  'bv': ["Bureau Veritas", "BV class", "BV survey", "BV certificate"],
+  'abs': ["American Bureau of Shipping", "ABS class", "ABS survey"],
+  'nk': ["Nippon Kaisha", "ClassNK", "NK class", "NK survey"],
+  'rina': ["Registro Italiano Navale", "RINA class", "RINA survey"],
+
+  // 2. Cargo types
+  'grain': ["wheat", "barley", "corn", "maize", "sorghum", "grain rules", "shifting boards", "angle of repose", "IMSBC grain", "grain fumigation"],
+  'wheat': ["grain", "bulk grain", "grain fumigation", "grain cargo"],
+  'corn': ["maize", "grain", "bulk grain", "grain fumigation"],
+  'coal': ["bulk cargo", "self heating coal", "methane emission", "IMSBC Group B", "thermal coal", "coking coal", "coal cargo"],
+  'iron ore': ["ore fines", "bulk cargo", "liquefaction risk", "IMSBC Group A", "iron ore fines", "moisture content"],
+  'bauxite': ["alumina ore", "bulk cargo", "liquefaction risk", "IMSBC Group A", "bauxite cargo"],
+  'nickel ore': ["laterite ore", "liquefaction risk", "IMSBC Group A", "Philippine nickel", "nickel cargo"],
+  'copper concentrate': ["concentrate cargo", "liquefaction risk", "IMSBC Group A", "Chilean copper", "copper cargo"],
+  'crude oil': ["tanker cargo", "VLCC cargo", "crude washing", "load on top", "crude oil tanker"],
+  'fuel oil': ["bunker fuel", "residual fuel", "HFO", "fuel oil cargo", "heavy fuel"],
+  'lng': ["liquefied natural gas", "LNG carrier", "boil off gas", "cryogenic cargo", "LNG trade"],
+  'lpg': ["liquefied petroleum gas", "VLGC cargo", "propane cargo", "butane cargo", "LPG trade"],
+  'chemicals': ["chemical tanker", "IMO type II", "IMO type III", "MARPOL Annex II", "NLS cargo", "tank cleaning"],
+  'fertilizer': ["urea cargo", "ammonium nitrate", "DAP cargo", "bulk fertilizer", "reactive cargo"],
+  'cement': ["bulk cement", "pneumatic discharge", "cement cargo"],
+  'sugar': ["bulk sugar", "sugar contamination", "sugar fumigation", "food grade cargo"],
+  'rice': ["food cargo", "fumigation", "bagged", "bulk"],
+  'containers': ["TEU", "FEU", "reefer container", "dangerous goods container", "IMDG code", "container lashing"],
+  'timber': ["wood cargo", "log cargo", "deck cargo", "timber lashing", "moisture absorption"],
+  'scrap metal': ["HMS scrap", "shredded scrap", "bulk scrap", "scrap contamination"],
+  'steel': ["steel coils", "steel plates", "steel pipes", "breakbulk steel", "rust damage"],
+  'vehicles': ["ro-ro cargo", "PCTC cargo", "vehicle lashing", "car carrier cargo"],
+  'livestock': ["live animals", "ventilation", "welfare", "fodder"],
+
+  // 3. Vessel types
+  'tanker': ["crude oil tanker", "product tanker", "chemical tanker", "VLCC", "Aframax", "Suezmax", "Panamax tanker"],
+  'vlcc': ["very large crude carrier", "crude oil tanker", "VLCC market", "VLCC freight"],
+  'aframax': ["Aframax tanker", "crude oil tanker", "Mediterranean tanker", "Black Sea tanker"],
+  'suezmax': ["Suezmax tanker", "crude oil tanker", "Suez Canal tanker"],
+  'product tanker': ["MR tanker", "LR1 tanker", "LR2 tanker", "clean product", "dirty product", "coated tank"],
+  'chemical tanker': ["IMO type II", "IMO type III", "stainless steel tank", "coated tank", "NLS tanker"],
+  'bulker': ["bulk carrier", "dry bulk", "Capesize", "Panamax bulk", "Supramax", "Handysize"],
+  'capesize': ["Capesize bulk carrier", "iron ore trade", "coal trade", "Cape of Good Hope routing"],
+  'panamax': ["Panamax bulk carrier", "grain trade", "coal trade", "Panama Canal vessel"],
+  'supramax': ["Supramax bulk carrier", "geared vessel", "grab discharge vessel"],
+  'handysize': ["Handysize bulk carrier", "geared vessel", "minor bulk trade"],
+  'container ship': ["containership", "TEU capacity", "feeder vessel", "ultra large container vessel", "ULCV"],
+  'lng carrier': ["liquefied natural gas carrier", "membrane tank", "moss tank", "boil off management"],
+  'lpg carrier': ["VLGC", "MGC", "pressurized vessel", "semi-refrigerated vessel"],
+  'ro-ro': ["roll on roll off", "vehicle carrier", "PCTC vessel", "ro-ro ferry"],
+  'offshore': ["offshore support vessel", "AHTS", "PSV", "platform supply vessel", "anchor handling", "dynamic positioning"],
+  'cruise': ["passenger ship", "solas", "muster", "lifeboat"],
+  'tugboat': ["towage", "bollard pull", "harbor tug", "ocean tug", "tug assistance"],
+  'dredger': ["dredging", "hopper", "cutter suction", "trailing suction"],
+
+  // 4. Charter party / laytime
+  'demurrage': ["laytime exceeded", "demurrage claim", "demurrage calculation", "time bar", "NOR tendering", "demurrage rate"],
+  'laytime': ["allowed laytime", "time counting", "NOR commencement", "SHEX laytime", "SHINC laytime", "laytime calculation"],
+  'charter party': ["fixture recap", "charterparty terms", "owner charterer", "head charter", "charter agreement"],
+  'time charter': ["TC hire", "off hire", "on hire", "performance claim", "speed consumption", "time charter party"],
+  'voyage charter': ["voyage freight", "deadfreight", "dispatch money", "demurrage", "voyage instructions"],
+  'bareboat charter': ["demise charter", "BARECON", "bareboat hire"],
+  'nype': ["New York Produce Exchange", "time charter form", "hire payment", "off hire clause"],
+  'shelltime': ["Shelltime 4", "time charter performance", "speed warranty", "consumption warranty"],
+  'gencon': ["voyage charter form", "demurrage clause", "freight clause", "laytime clause"],
+  'supplytime': ["offshore charter", "day rate hire", "SUPPLYTIME form"],
+  'performance claim': ["speed claim", "speed and consumption claim", "charter party performance", "underperformance", "weather routing"],
+  'off hire': ["time charter breakdown", "off hire period", "deficiency clause", "drydock off hire"],
+  'despatch': ["laytime saved", "half despatch", "despatch calculation", "charterer benefit"],
+  'deadfreight': ["short shipment", "minimum quantity", "freight shortfall"],
+  'arbitration': ["LMAA arbitration", "London arbitration", "arbitration award", "maritime dispute"],
+
+  // 5. P&I / insurance
+  'p&i club': ["protection indemnity club", "mutual insurance", "IG clubs", "International Group of P&I"],
+  'general average': ["York Antwerp Rules", "GA contribution", "average bond", "average guarantee", "GA adjustment"],
+  'salvage': ["LOF salvage", "SCOPIC clause", "wreck removal", "place of refuge", "salvage award"],
+  'collision': ["collision liability", "both to blame collision", "hull damage repair", "collision claim"],
+  'pollution': ["oil spill", "MARPOL violation", "OPA 90", "bunker convention", "pollution fund"],
+  'cargo claim': ["cargo damage", "cargo shortage", "cargo contamination", "bill of lading claim"],
+  'personal injury': ["seafarer injury", "MLC compensation", "crew repatriation", "personal injury claim"],
+  'wreck removal': ["Nairobi Convention", "wreck removal insurance", "blue card"],
+  'letter of undertaking': ["LOU security", "P&I undertaking", "ship arrest security"],
+  'arrest': ["ship arrest", "maritime lien", "arrest security", "vessel attachment"],
+
+  // 6. Port / operations
+  'port state control': ["PSC inspection", "PSC detention", "PSC deficiency", "Paris MOU", "Tokyo MOU", "USCG inspection"],
+  'detention': ["PSC detention", "port state detention", "deficiency rectification", "detention appeal"],
+  'paris mou': ["port state control", "PSC detention", "European port inspection", "Paris MOU report"],
+  'tokyo mou': ["port state control", "Asia Pacific inspection", "Tokyo MOU report"],
+  'uscg': ["United States Coast Guard", "USCG inspection", "USCG detention", "USCG COI"],
+  'pilot': ["pilotage compulsory", "pilot boarding", "pilot embarkation", "pilot station"],
+  'drydock': ["dry dock", "special survey", "docking survey", "class renewal", "drydock period"],
+  'bunker': ["bunkering operation", "bunker quality", "bunker quantity", "MARPOL sulphur", "bunker stem"],
+  'deviation': ["off hire deviation", "liberty clause", "port of refuge", "deviation clause"],
+  'draft survey': ["draught survey", "cargo weight determination", "draft survey report"],
+  'fumigation': ["cargo fumigation", "ISPM15 fumigation", "methyl bromide", "phosphine fumigation"],
+  'dangerous goods': ["IMDG code", "DG cargo classification", "dangerous goods declaration", "packing group"],
+
+  // 7. Performance / speed & consumption claims (user 2026-06-10)
+  'speed claim': ["speed and consumption claim", "underperformance claim", "overconsumption", "performance claim", "charter party performance", "Shelltime 4", "NYPE performance"],
+  'speed and consumption claim': ["speed claim", "underperformance claim", "overconsumption", "performance warranty", "charter party"],
+  'underperformance claim': ["speed claim", "speed and consumption claim", "overconsumption", "performance claim"],
+  'overconsumption': ["speed claim", "underperformance claim", "performance claim", "bunker overconsumption", "fuel overconsumption"],
+  'good weather day': ["weather routing", "Beaufort scale", "Douglas sea scale", "performance claim exclusion", "weather qualification"],
+  'bottom fouling': ["hull fouling", "biofouling", "hull performance loss", "hull cleaning", "underwater hull inspection"],
+  'vessel performance': ["speed claim", "performance claim", "hull fouling effect", "weather routing", "speed and consumption"],
+
+  // 8. Narcotics / smuggling / security (user 2026-06-10)
+  'narcotic': ["drug trafficking", "contraband cargo", "controlled substance", "drug smuggling", "drug test crew", "zero tolerance policy", "ISPS code", "PSC drug inspection"],
+  'drug': ["narcotic", "drug trafficking", "contraband", "controlled substance", "drug smuggling", "drug test", "zero tolerance"],
+  'drugs': ["narcotic", "drug trafficking", "contraband", "controlled substance", "drug smuggling", "drug test", "zero tolerance"],
+  'smuggling': ["contraband smuggling", "drug trafficking", "stowaways", "illegal cargo", "ISPS security", "PSC security"],
+  'contraband': ["smuggling operation", "narcotic cargo", "illegal cargo", "ISPS check", "security search"],
+  'drug test': ["narcotic testing", "crew drug test", "random drug testing", "zero tolerance policy", "MLC drug policy"],
+};
 ---
 <section class="max-w-7xl 2xl:max-w-[100rem] mx-auto px-4 pt-4">
   {/* PROMINENT search (user 2026-06-09: the old faint bar read as decoration —
@@ -47,6 +231,19 @@ const base = (import.meta.env.PUBLIC_PAGEFIND_BASE ?? '').replace(/\/$/, '');
         class="hidden absolute right-3 top-1/2 -translate-y-1/2 w-7 h-7 items-center justify-center rounded-full text-slate-400 hover:text-slate-700 hover:bg-slate-100 text-xl leading-none">×</button>
     </div>
     <p class="mt-1.5 text-center text-xs text-slate-400">Full-text search across news, P&amp;I circulars &amp; class-society updates — type to begin</p>
+  </div>
+
+  {/* Related-terms dropdown — opens when the typed query matches (a prefix of) a
+      synonym key. Checkbox list, all ON by default; only checked terms join the
+      search. Closes on outside-click; the button reopens it. JS-built list. */}
+  <div id="sf-related-wrap" class="hidden mt-3">
+    <div class="relative inline-block">
+      <button id="sf-related-btn" type="button" class="sf-chip">Related terms ▾</button>
+      <div id="sf-related-panel" class="hidden absolute z-20 mt-1 w-80 bg-white border border-slate-200 rounded-lg shadow-lg p-2">
+        <div id="sf-related-title" class="text-[10px] font-bold uppercase tracking-wide text-slate-400 px-1 pb-1">Related terms</div>
+        <div id="sf-related-list" class="max-h-72 overflow-y-auto pr-1"></div>
+      </div>
+    </div>
   </div>
 
   {/* Type / Segment / Theme chip rows — built ONCE at init from pagefind.filters() */}
@@ -88,7 +285,7 @@ const base = (import.meta.env.PUBLIC_PAGEFIND_BASE ?? '').replace(/\/$/, '');
   </div>
 </section>
 
-<script is:inline define:vars={{ base }}>
+<script is:inline define:vars={{ base, SYNONYMS }}>
   (function () {
     // Date-sort needs data-pagefind-sort indexed. The article template emits it,
     // but it only reaches the LIVE index after a _pagefind REGEN (B3). Requesting
@@ -141,6 +338,11 @@ const base = (import.meta.env.PUBLIC_PAGEFIND_BASE ?? '').replace(/\/$/, '');
     var chipsEl = document.getElementById('sf-chips');
     var clearBtn = document.getElementById('sf-clear');
     var qClear = document.getElementById('sf-q-clear');
+    var relatedWrap = document.getElementById('sf-related-wrap');
+    var relatedBtn = document.getElementById('sf-related-btn');
+    var relatedPanel = document.getElementById('sf-related-panel');
+    var relatedTitle = document.getElementById('sf-related-title');
+    var relatedList = document.getElementById('sf-related-list');
     if (!qEl) return;
 
     // Custom search-clear × (native type=search × is hidden in is:global; it
@@ -154,8 +356,32 @@ const base = (import.meta.env.PUBLIC_PAGEFIND_BASE ?? '').replace(/\/$/, '');
 
     var pf = null, pending = null, debounce = null;
     var sel = { q: '', type: new Set(), segment: new Set(), theme: new Set(), source: new Set() };
-    var results = [], shown = 0;
-    var seenUrls = {}; // dedup base+delta overlap at render (same article in both indexes)
+    var streams = [], shown = 0; // streams: one date-sorted result list per search term (raw + expansions)
+    var seenUrls = {};   // dedup base+delta overlap AND cross-term overlap, by url, at render
+    var relKey = null;       // normalized synonym-map key currently matched (or null)
+    var relSel = new Set();  // related terms the user has SELECTED to include in the search
+
+    // Query expansion: if the typed query EXACTLY matches a synonym-map key (and
+    // isn't a quoted phrase), its related terms appear as toggleable chips under
+    // the search box — ALL on by default (user 2026-06-10) — and only the SELECTED
+    // ones are searched alongside the raw query. Keys lowercased; multi-word related
+    // terms searched as exact phrases. SYNONYMS injected from frontmatter (define:vars).
+    function isQuoted(q) { return /^".*"$/.test(q); }
+    function synKey(q) { return (q || '').toLowerCase().replace(/\s+/g, ' ').trim(); }
+    // Match the typed text to a synonym key. Exact key first (any length, incl. the
+    // 2-char 'ga'); otherwise (>=3 chars) the SHORTEST key that STARTS WITH the typed
+    // text — so "spe"/"speed" → "speed claim" (which itself lists the longer variants
+    // as related terms). Returns {key, terms} or null.
+    function relatedFor(q) {
+      if (!q || isQuoted(q)) return null;
+      var t = synKey(q);
+      if (!t) return null;
+      if (SYNONYMS[t]) return { key: t, terms: SYNONYMS[t] };
+      if (t.length < 3) return null;
+      var best = null;
+      for (var k in SYNONYMS) { if (k.indexOf(t) === 0 && (!best || k.length < best.length)) best = k; }
+      return best ? { key: best, terms: SYNONYMS[best] } : null;
+    }
 
     function isActive() { return !!sel.q || ALL_FACETS.some(function (k) { return sel[k].size > 0; }); }
 
@@ -348,24 +574,13 @@ const base = (import.meta.env.PUBLIC_PAGEFIND_BASE ?? '').replace(/\/$/, '');
       });
     }
 
-    function renderChunk() {
-      var html = '';
-      for (var i = shown; i < Math.min(shown + PAGE, results.length); i++) {
-        var r = results[i];
-        if (!r || !r.__data) continue;
-        // Dedup base+delta overlap: a recent article is in BOTH indexes (different
-        // fragment ids, SAME url) → render it once. Keyed on the detail-page url.
-        var u = r.__data.url;
-        if (u) { if (seenUrls[u]) continue; seenUrls[u] = 1; }
-        html += card(r.__data);
-      }
-      resultsEl.insertAdjacentHTML('beforeend', html);
-      shown = Math.min(shown + PAGE, results.length);
-      moreBtn.classList.toggle('hidden', shown >= results.length);
-    }
-    // Resolve each result's data() with a per-item timeout + catch, so ONE slow/
-    // failing/CORP-blocked fragment can never hang or blank the whole render.
-    // renderChunk then simply skips any result whose __data didn't resolve.
+    // ---- Result consumption: k-way merge across the per-term streams ----------
+    // Each stream (one per search term) is already date-sorted DESC by Pagefind.
+    // We merge them into ONE globally date-sorted stream (pure date order, per the
+    // user's choice 2026-06-10), resolving each result's data() LAZILY — only the
+    // heads being compared + the items actually output — so a broad expansion term
+    // never forces thousands of fragment fetches. Dedup by url (handles base/delta
+    // AND cross-term overlap). A slow/failing fragment is skipped, never hangs.
     function withTimeout(p, ms) {
       return new Promise(function (resolve) {
         var done = false;
@@ -374,15 +589,85 @@ const base = (import.meta.env.PUBLIC_PAGEFIND_BASE ?? '').replace(/\/$/, '');
                function () { if (!done) { done = true; clearTimeout(t); resolve(); } });
       });
     }
-    async function ensureData(from, to) {
+    async function resolveHeads() {
       var jobs = [];
-      for (var i = from; i < Math.min(to, results.length); i++) {
-        (function (r) {
-          if (!r || r.__data || typeof r.data !== 'function') return;
+      streams.forEach(function (s) {
+        var r = s.results[s.idx];
+        if (r && !r.__data && typeof r.data === 'function') {
           jobs.push(withTimeout(r.data().then(function (d) { r.__data = d; }), 8000));
-        })(results[i]);
+        }
+      });
+      if (jobs.length) await Promise.all(jobs);
+    }
+    function dateOf(r) {
+      var d = r && r.__data && r.__data.meta ? r.__data.meta.date : null;
+      var t = d ? new Date(d).getTime() : NaN;
+      return isNaN(t) ? -Infinity : t; // undated sinks to the bottom
+    }
+    // Pull the next `n` globally date-newest, de-duplicated results.
+    async function pullNext(n) {
+      var out = [];
+      while (out.length < n) {
+        await resolveHeads();
+        var best = -1, bestT = 0;
+        for (var i = 0; i < streams.length; i++) {
+          var r = streams[i].results[streams[i].idx];
+          if (!r) continue;
+          var t = dateOf(r);
+          if (best === -1 || t > bestT) { best = i; bestT = t; }
+        }
+        if (best === -1) break; // all streams exhausted
+        var s = streams[best];
+        var chosen = s.results[s.idx];
+        s.idx++; // advance even on a dup, so the merge always makes progress
+        var u = chosen.__data && chosen.__data.url;
+        if (u) { if (seenUrls[u]) continue; seenUrls[u] = 1; }
+        out.push(chosen);
       }
-      await Promise.all(jobs);
+      return out;
+    }
+    async function renderMore() {
+      var batch = await pullNext(PAGE);
+      var html = '';
+      for (var i = 0; i < batch.length; i++) html += card(batch[i].__data);
+      resultsEl.insertAdjacentHTML('beforeend', html);
+      shown += batch.length;
+      var hasMore = streams.some(function (s) { return s.idx < s.results.length; });
+      moreBtn.classList.toggle('hidden', !hasMore);
+    }
+    // Related-terms checkbox panel for the matched key. All ON by default; toggling
+    // a checkbox updates relSel + re-runs. Rebuilt only when the key changes (so the
+    // DOM checkbox state + open/closed state persist while the user keeps typing).
+    // Reuses the source-dropdown's safelisted classes (JS-built → not Tailwind-scanned).
+    function updateRelatedBtn() {
+      if (relatedBtn) relatedBtn.textContent = 'Related terms (' + relSel.size + ') ▾';
+    }
+    function renderRelatedPanel(rel) {
+      if (!relatedWrap) return;
+      if (!rel) {
+        relatedWrap.classList.add('hidden');
+        if (relatedPanel) relatedPanel.classList.add('hidden');
+        if (relatedList) relatedList.innerHTML = '';
+        return;
+      }
+      relatedWrap.classList.remove('hidden');
+      if (relatedTitle) relatedTitle.textContent = 'Related to “' + rel.key + '”';
+      var html = '';
+      rel.terms.forEach(function (term) {
+        html += '<label class="flex items-center gap-2 text-sm py-0.5 px-1 rounded hover:bg-slate-50 cursor-pointer">' +
+          '<input type="checkbox" class="accent-sky-600" data-rel="' + esc(term) + '"' + (relSel.has(term) ? ' checked' : '') + '>' +
+          '<span class="truncate">' + esc(term) + '</span></label>';
+      });
+      relatedList.innerHTML = html;
+      Array.prototype.forEach.call(relatedList.querySelectorAll('input[data-rel]'), function (cb) {
+        cb.addEventListener('change', function () {
+          var term = cb.getAttribute('data-rel');
+          if (cb.checked) relSel.add(term); else relSel.delete(term);
+          updateRelatedBtn();
+          run();
+        });
+      });
+      updateRelatedBtn();
     }
 
     async function run() {
@@ -396,7 +681,7 @@ const base = (import.meta.env.PUBLIC_PAGEFIND_BASE ?? '').replace(/\/$/, '');
       resultsWrap.classList.toggle('hidden', !active);
       activeEl.classList.toggle('hidden', !active);
       activeEl.classList.toggle('flex', active);
-      if (!active) { resultsEl.innerHTML = ''; results = []; shown = 0; if (loadEl) loadEl.classList.add('hidden'); return; }
+      if (!active) { resultsEl.innerHTML = ''; streams = []; shown = 0; relKey = null; relSel = new Set(); renderRelatedPanel(null); if (loadEl) loadEl.classList.add('hidden'); return; }
 
       // Show the loading state IMMEDIATELY so a search/filter never looks like a
       // blank/broken screen during the wait (cold cdn index load measured ~9.5s
@@ -406,24 +691,51 @@ const base = (import.meta.env.PUBLIC_PAGEFIND_BASE ?? '').replace(/\/$/, '');
       if (loadEl) loadEl.classList.remove('hidden');
 
       var token = {}; pending = token;
-      // Newest-first for ALL results — browse AND text queries (user, 2026-06-08:
-      // "arama sonuçları tarih sırasına göre listelenmeli"). Pagefind's `sort`
-      // overrides relevance ranking; the date sort key is in the regenerated
-      // index (B3), so this renders cards for queries too (validated post-regen).
+
+      // Related-terms dropdown: prefix-match the typed text to a synonym key.
+      // Rebuild + AUTO-OPEN only when the matched key changes (so the user's
+      // checkbox toggles + open/closed state persist while they keep typing).
+      // A new key starts with ALL related terms checked; only checked terms join
+      // the search (live — user 2026-06-10). Multi-word ones search as phrases.
+      var rel = relatedFor(sel.q);
+      var key = rel ? rel.key : null;
+      if (key !== relKey) {
+        relKey = key;
+        relSel = rel ? new Set(rel.terms) : new Set();
+        renderRelatedPanel(rel);
+        if (rel && relatedPanel) relatedPanel.classList.remove('hidden'); // auto-open on a new match
+      }
+      var terms = [sel.q];
+      if (rel) rel.terms.forEach(function (t) { if (relSel.has(t)) terms.push(/\s/.test(t) ? '"' + t + '"' : t); });
+
+      // Newest-first for ALL results — browse AND text queries (user, 2026-06-08).
+      // Pagefind's `sort` overrides relevance; the date key is in the index (B3).
       var opts = { filters: filtersObj() };
       if (DATE_SORT) opts.sort = { date: 'desc' };
-      var search = await pf.search(sel.q || null, opts);
+
+      var searches;
+      try { searches = await Promise.all(terms.map(function (t) { return pf.search(t || null, opts); })); }
+      catch (e) { searches = null; }
       if (pending !== token) return; // a newer search will manage the loading state
-      results = search.results;
-      countEl.textContent = results.length.toLocaleString('en-US') + ' result' + (results.length === 1 ? '' : 's');
+      if (!searches) { if (loadEl) loadEl.classList.add('hidden'); return; }
+
+      streams = searches.map(function (s) { return { results: s.results, idx: 0 }; });
+
+      // Count = unique fragment ids across all streams (cheap, no data()). Base/
+      // delta overlap leaves the same ~1% inflation the single-search path had.
+      var idset = {};
+      streams.forEach(function (s) { for (var i = 0; i < s.results.length; i++) idset[s.results[i].id] = 1; });
+      var total = Object.keys(idset).length;
+      countEl.textContent = total.toLocaleString('en-US') + ' result' + (total === 1 ? '' : 's');
+
       // A data()/render failure must never blank the feed — render whatever resolved.
-      try { await ensureData(0, PAGE); renderChunk(); } catch (e) {}
+      try { await renderMore(); } catch (e) {}
       if (pending !== token) return;
       if (loadEl) loadEl.classList.add('hidden');
-      emptyEl.classList.toggle('hidden', results.length > 0);
+      emptyEl.classList.toggle('hidden', total > 0);
     }
 
-    moreBtn.addEventListener('click', async function () { await ensureData(shown, shown + PAGE); renderChunk(); });
+    moreBtn.addEventListener('click', async function () { await renderMore(); });
     clearBtn.addEventListener('click', function () {
       sel.q = ''; qEl.value = ''; ALL_FACETS.forEach(function (k) { sel[k] = new Set(); }); syncQClear(); run();
     });
@@ -436,8 +748,10 @@ const base = (import.meta.env.PUBLIC_PAGEFIND_BASE ?? '').replace(/\/$/, '');
       clearTimeout(debounce);
       // Short queries match a huge slice of the 51k index — heavy + useless, and
       // 1-2 chars froze a slower machine (2026-06-08). Require 3+ chars; 0 (cleared)
-      // still runs to reset back to the static feed.
-      if (sel.q.length > 0 && sel.q.length < 3) return;
+      // still runs to reset back to the static feed. EXCEPTION: a 2-char query that
+      // is a known synonym-map key (GA, CP, BV, LR, NK) is allowed — its expansion
+      // gives real results.
+      if (sel.q.length > 0 && sel.q.length < 3 && !SYNONYMS[sel.q.toLowerCase()]) return;
       debounce = setTimeout(run, 300);
     });
     // Source panel: toggle open, re-render with current selection on open, filter
@@ -451,7 +765,13 @@ const base = (import.meta.env.PUBLIC_PAGEFIND_BASE ?? '').replace(/\/$/, '');
     });
     if (sourceQ) sourceQ.addEventListener('input', function () { renderSourceList(sourceQ.value); });
     if (sourcePanel) sourcePanel.addEventListener('click', function (e) { e.stopPropagation(); });
-    document.addEventListener('click', function () { if (sourcePanel) sourcePanel.classList.add('hidden'); });
+    // Related-terms dropdown: button toggles it; clicks inside don't close it.
+    if (relatedBtn) relatedBtn.addEventListener('click', function (e) { e.stopPropagation(); if (relatedPanel) relatedPanel.classList.toggle('hidden'); });
+    if (relatedPanel) relatedPanel.addEventListener('click', function (e) { e.stopPropagation(); });
+    document.addEventListener('click', function () {
+      if (sourcePanel) sourcePanel.classList.add('hidden');
+      if (relatedPanel) relatedPanel.classList.add('hidden');
+    });
     window.addEventListener('popstate', function () { readURL(); run(); });
 
     async function init() {
