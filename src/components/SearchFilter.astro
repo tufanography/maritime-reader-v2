@@ -16,12 +16,15 @@
 //  - SOURCE is a dropdown (57 values) not a chip wall — matches v1; also removes
 //    the per-keystroke 57-chip rebuild.
 //  - Phrase search already works (Pagefind native): "exact phrase" in quotes.
-//  - SYNONYM EXPANSION (2026-06-10): the typed text is matched to a SYNONYMS key —
-//    exact, else the shortest key that STARTS WITH it ("speed" → "speed claim"). Its
-//    related terms open in a checkbox DROPDOWN under the box (auto-opens on a new
-//    match, closes on outside-click, reopen via the button) — ALL checked by default;
-//    only CHECKED terms are searched alongside the raw query (live). Streams are
-//    k-way merged in pure date order, deduped by url. A quoted query gets no panel.
+//  - SYNONYM EXPANSION (Phase A, 2026-06-10): 3-LAYER map (trigger / related /
+//    narrow) loaded from /maritime-search-map.json (NOT inlined). trigger = exact or
+//    >=3-char prefix [shortest] ("speed"→"speed claim") → topic's related; narrow-key
+//    exact → that narrow set; related exact → its narrow (else nothing, so a specific
+//    term doesn't re-open the broad parent). Matches open a checkbox DROPDOWN under
+//    the box (auto-opens on a new match, outside-click closes, button reopens) — ALL
+//    checked by default; only CHECKED terms search alongside the raw query (live);
+//    blockedSingleWordRelatedTerms never appear as chips. k-way merge, pure date,
+//    dedup by url. Quoted → no panel. Map detail: maritime-search-map.json.
 //
 // Self-contained; does NOT touch Search.astro (header search on other pages).
 // Card classes are COPIED from CompactArticleCard.astro so Tailwind (which does
@@ -29,15 +32,13 @@
 
 const base = (import.meta.env.PUBLIC_PAGEFIND_BASE ?? '').replace(/\/$/, '');
 
-// Synonym / related-terms map for client-side query expansion (2026-06-10).
-// When the typed query EXACTLY equals a key (lowercased, not a quoted phrase),
-// the client also searches the listed related terms and merges the results —
-// so "PSC" also surfaces "port state control" articles. Directed (key → values),
-// used as authored; not auto-reversed. Multi-word related terms are searched as
-// exact phrases at runtime. Shown as toggleable chips (all on by default); only
-// the user-selected terms are searched. Maritime acronyms + cargo / vessel-type /
-// charter-party / P&I / port / performance-claim / narcotics domains.
-const SYNONYMS: Record<string, string[]> = {
+// DEPRECATED (2026-06-10, Phase A): this inline SYNONYMS const is NO LONGER USED.
+// The search map moved to /public/maritime-search-map.json — a 3-layer
+// trigger/related/narrow structure FETCHED at runtime, so it is NOT inlined into
+// the homepage HTML (user requirement). It is not referenced by define:vars or the
+// script below, so it ships nowhere. Kept temporarily only to avoid a 170-line diff;
+// DELETE this whole const in the Phase B cleanup. See maritime-search-map.json.
+const SYNONYMS_DEPRECATED: Record<string, string[]> = {
   // 1. Abbreviations
   'psc': ["port state control", "port state inspection", "PSC detention", "PSC deficiency", "Paris MOU", "Tokyo MOU", "USCG"],
   'ism': ["international safety management", "safety management system", "ISM code", "ISM audit", "ISM certificate"],
@@ -285,7 +286,7 @@ const SYNONYMS: Record<string, string[]> = {
   </div>
 </section>
 
-<script is:inline define:vars={{ base, SYNONYMS }}>
+<script is:inline define:vars={{ base }}>
   (function () {
     // Date-sort needs data-pagefind-sort indexed. The article template emits it,
     // but it only reaches the LIVE index after a _pagefind REGEN (B3). Requesting
@@ -358,30 +359,59 @@ const SYNONYMS: Record<string, string[]> = {
     var sel = { q: '', type: new Set(), segment: new Set(), theme: new Set(), source: new Set() };
     var streams = [], shown = 0; // streams: one date-sorted result list per search term (raw + expansions)
     var seenUrls = {};   // dedup base+delta overlap AND cross-term overlap, by url, at render
-    var relKey = null;       // normalized synonym-map key currently matched (or null)
-    var relSel = new Set();  // related terms the user has SELECTED to include in the search
+    var relKey = null;       // identity (title) of the currently matched panel, or null
+    var relSel = new Set();  // related/narrow terms the user has SELECTED to include
 
-    // Query expansion: if the typed query EXACTLY matches a synonym-map key (and
-    // isn't a quoted phrase), its related terms appear as toggleable chips under
-    // the search box — ALL on by default (user 2026-06-10) — and only the SELECTED
-    // ones are searched alongside the raw query. Keys lowercased; multi-word related
-    // terms searched as exact phrases. SYNONYMS injected from frontmatter (define:vars).
+    // 3-layer maritime search map (Phase A 2026-06-10): loaded at runtime from a
+    // static JSON (/maritime-search-map.json) — NOT inlined into the HTML. Matching:
+    //   trigger    (exact, or >=3-char prefix → SHORTEST trigger) → topic's `related`
+    //   narrow-key (exact)                                        → that narrow set only
+    //   related    (exact)                                        → its narrow set if any, else nothing
+    // blockedSingleWordRelatedTerms are filtered from every chip list. Quoted → nothing.
+    // Prefix only on triggers (the as-you-type discovery path: "spe"→"speed claim");
+    // related/narrow are exact (the user already typed the specific term) so searching
+    // a related term does NOT re-open the whole parent group (no result pollution).
+    var MAP = null;            // topicKey -> {triggers, related, narrow}
+    var BLOCKED = {};          // normalized blocked single word -> 1
+    var TRIGGERS = {};         // normTrigger -> {topic, label}
+    var TRIGGER_NORMS = [];    // [normTrigger] for the prefix scan
+    var RELATED = {};          // normRelatedTerm -> {topic, term}
+    var NARROW = {};           // normNarrowKey -> {topic, key}
     function isQuoted(q) { return /^".*"$/.test(q); }
-    function synKey(q) { return (q || '').toLowerCase().replace(/\s+/g, ' ').trim(); }
-    // Match the typed text to a synonym key. Exact key first (any length, incl. the
-    // 2-char 'ga'); otherwise (>=3 chars) the SHORTEST key that STARTS WITH the typed
-    // text — so "spe"/"speed" → "speed claim" (which itself lists the longer variants
-    // as related terms). Returns {key, terms} or null.
-    function relatedFor(q) {
-      if (!q || isQuoted(q)) return null;
-      var t = synKey(q);
-      if (!t) return null;
-      if (SYNONYMS[t]) return { key: t, terms: SYNONYMS[t] };
-      if (t.length < 3) return null;
-      var best = null;
-      for (var k in SYNONYMS) { if (k.indexOf(t) === 0 && (!best || k.length < best.length)) best = k; }
-      return best ? { key: best, terms: SYNONYMS[best] } : null;
+    function norm(q) { return (q || '').toLowerCase().replace(/\s+/g, ' ').trim(); }
+    function buildMapIndex(data) {
+      MAP = (data && data.topics) || {};
+      BLOCKED = {};
+      ((data && data.blockedSingleWordRelatedTerms) || []).forEach(function (w) { BLOCKED[norm(w)] = 1; });
+      TRIGGERS = {}; TRIGGER_NORMS = []; RELATED = {}; NARROW = {};
+      Object.keys(MAP).forEach(function (tk) {
+        var t = MAP[tk] || {};
+        (t.triggers || []).forEach(function (tr) { var n = norm(tr); if (!TRIGGERS[n]) { TRIGGERS[n] = { topic: tk, label: tr }; TRIGGER_NORMS.push(n); } });
+        (t.related || []).forEach(function (r) { var n = norm(r); if (!RELATED[n]) RELATED[n] = { topic: tk, term: r }; });
+        if (t.narrow) Object.keys(t.narrow).forEach(function (nk) { var n = norm(nk); if (!NARROW[n]) NARROW[n] = { topic: tk, key: nk }; });
+      });
     }
+    function filterBlocked(arr) { return (arr || []).filter(function (x) { return !BLOCKED[norm(x)]; }); }
+    // Returns { title, terms } for the matched panel, or null.
+    function relatedFor(q) {
+      if (!q || isQuoted(q) || !MAP) return null;
+      var t = norm(q);
+      if (!t) return null;
+      if (TRIGGERS[t]) { var m = TRIGGERS[t]; return { title: m.label, terms: filterBlocked(MAP[m.topic].related) }; }
+      if (NARROW[t]) { var nn = NARROW[t]; return { title: nn.key, terms: filterBlocked(MAP[nn.topic].narrow[nn.key]) }; }
+      if (RELATED[t]) { var rr = RELATED[t]; var nar = MAP[rr.topic].narrow && MAP[rr.topic].narrow[rr.term]; return nar ? { title: rr.term, terms: filterBlocked(nar) } : null; }
+      // A broad single word ("cargo", "inspection", "crew"...) must NOT prefix-expand
+      // into some topic ("cargo" → "cargo tank"). Exact triggers were already handled
+      // above, so a blocked word that is also a real trigger (e.g. "pollution") still works.
+      if (BLOCKED[t]) return null;
+      if (t.length >= 3) {
+        var best = null;
+        for (var i = 0; i < TRIGGER_NORMS.length; i++) { var tn = TRIGGER_NORMS[i]; if (tn.indexOf(t) === 0 && (!best || tn.length < best.length)) best = tn; }
+        if (best) { var bm = TRIGGERS[best]; return { title: bm.label, terms: filterBlocked(MAP[bm.topic].related) }; }
+      }
+      return null;
+    }
+    function isShortExactTrigger(q) { return !!(MAP && TRIGGERS[norm(q)]); }
 
     function isActive() { return !!sel.q || ALL_FACETS.some(function (k) { return sel[k].size > 0; }); }
 
@@ -651,7 +681,7 @@ const SYNONYMS: Record<string, string[]> = {
         return;
       }
       relatedWrap.classList.remove('hidden');
-      if (relatedTitle) relatedTitle.textContent = 'Related to “' + rel.key + '”';
+      if (relatedTitle) relatedTitle.textContent = 'Related to “' + rel.title + '”';
       var html = '';
       rel.terms.forEach(function (term) {
         html += '<label class="flex items-center gap-2 text-sm py-0.5 px-1 rounded hover:bg-slate-50 cursor-pointer">' +
@@ -698,7 +728,7 @@ const SYNONYMS: Record<string, string[]> = {
       // A new key starts with ALL related terms checked; only checked terms join
       // the search (live — user 2026-06-10). Multi-word ones search as phrases.
       var rel = relatedFor(sel.q);
-      var key = rel ? rel.key : null;
+      var key = rel ? rel.title : null;
       if (key !== relKey) {
         relKey = key;
         relSel = rel ? new Set(rel.terms) : new Set();
@@ -751,7 +781,7 @@ const SYNONYMS: Record<string, string[]> = {
       // still runs to reset back to the static feed. EXCEPTION: a 2-char query that
       // is a known synonym-map key (GA, CP, BV, LR, NK) is allowed — its expansion
       // gives real results.
-      if (sel.q.length > 0 && sel.q.length < 3 && !SYNONYMS[sel.q.toLowerCase()]) return;
+      if (sel.q.length > 0 && sel.q.length < 3 && !isShortExactTrigger(sel.q)) return;
       debounce = setTimeout(run, 300);
     });
     // Source panel: toggle open, re-render with current selection on open, filter
@@ -775,6 +805,13 @@ const SYNONYMS: Record<string, string[]> = {
     window.addEventListener('popstate', function () { readURL(); run(); });
 
     async function init() {
+      // Load the maritime search map (separate static JSON, not inlined). If it's
+      // missing/unreachable, search still works — just no related-term chips.
+      // no-cache so Phase B map edits show up without an edge-cache purge.
+      try {
+        var _mr = await fetch((base || '') + '/maritime-search-map.json', { cache: 'no-cache' });
+        if (_mr.ok) buildMapIndex(await _mr.json());
+      } catch (e) { /* map unavailable — chips disabled, search unaffected */ }
       try {
         pf = await import((base || '') + '/_pagefind/pagefind.js');
         await pf.options({ baseUrl: '/' });

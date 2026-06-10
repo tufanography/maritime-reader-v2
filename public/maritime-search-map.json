@@ -1,0 +1,416 @@
+{
+  "_comment": "Maritime search expansion map (Phase A v1, 2026-06-10). 3-layer: triggers (exact or prefix → open related), related (exact → open its narrow, else nothing), narrow (exact → that narrow set only). blockedSingleWordRelatedTerms are filtered from any chip list. Loaded client-side by SearchFilter.astro (fetch, not inlined). Grow by domain in Phase C; crane/deck-machinery/steering-gear pending.",
+  "blockedSingleWordRelatedTerms": ["inspection", "cargo", "crew", "security", "survey", "class", "insurance", "safety", "port", "ship", "vessel", "claim", "damage", "fuel", "oil", "market", "operation", "service", "agent", "risk", "certificate", "regulation", "pollution", "fire", "loss", "dispute", "shortage", "detention", "sanctions", "compliance"],
+  "topics": {
+    "psc": {
+      "triggers": ["psc", "port state control"],
+      "related": ["PSC inspection", "PSC detention", "PSC deficiency", "port state detention", "deficiency rectification", "detention appeal", "Paris MOU", "Tokyo MOU", "USCG detention", "USCG inspection", "concentrated inspection campaign", "expanded inspection"],
+      "narrow": {
+        "PSC detention": ["port state detention", "detention appeal", "deficiency rectification", "PSC deficiency"],
+        "PSC deficiency": ["deficiency rectification", "ISM deficiency", "MARPOL deficiency", "SOLAS deficiency", "MLC deficiency"],
+        "Paris MOU": ["Paris MOU detention", "Paris MOU inspection", "Paris MOU white list", "Paris MOU grey list", "Paris MOU black list"],
+        "Tokyo MOU": ["Tokyo MOU detention", "Tokyo MOU inspection", "Tokyo MOU annual report"],
+        "USCG detention": ["United States Coast Guard detention", "USCG deficiency", "USCG port state control"]
+      }
+    },
+    "ism": {
+      "triggers": ["ism", "ism code", "international safety management"],
+      "related": ["safety management system", "SMS", "ISM audit", "ISM certificate", "safety management certificate", "document of compliance", "DOC certificate", "non conformity", "major non conformity", "ISM deficiency"],
+      "narrow": {
+        "ISM audit": ["internal audit", "external audit", "ISM non conformity", "major non conformity"],
+        "ISM certificate": ["safety management certificate", "SMC certificate", "DOC certificate"]
+      }
+    },
+    "solas": {
+      "triggers": ["solas", "safety of life at sea"],
+      "related": ["SOLAS Convention", "SOLAS certificate", "safety construction certificate", "safety equipment certificate", "life saving appliance", "fire safety system", "GMDSS", "emergency generator", "lifeboat drill", "fire drill"],
+      "narrow": {
+        "life saving appliance": ["LSA equipment", "lifeboat", "life raft", "rescue boat", "immersion suit"],
+        "fire safety system": ["fire detection system", "fixed CO2 system", "fire pump", "emergency fire pump"]
+      }
+    },
+    "marpol": {
+      "triggers": ["marpol", "marine pollution"],
+      "related": ["MARPOL Convention", "MARPOL Annex I", "MARPOL Annex II", "MARPOL Annex V", "MARPOL Annex VI", "oil pollution", "garbage management", "cargo residues", "sulphur limit", "emission control area", "IOPP certificate", "oil record book", "garbage record book"],
+      "narrow": {
+        "MARPOL Annex V": ["cargo residue disposal", "HME cargo residue", "hold wash water", "garbage management plan"],
+        "MARPOL Annex VI": ["sulphur cap", "ECA fuel", "SECA compliance", "NOx emission", "scrubber washwater"]
+      }
+    },
+    "mlc": {
+      "triggers": ["mlc", "maritime labour convention", "mlc 2006"],
+      "related": ["seafarer rights", "crew welfare", "crew repatriation", "crew wages", "MLC certificate", "MLC inspection", "seafarer employment agreement", "SEA agreement", "abandonment of seafarers", "crew accommodation"],
+      "narrow": {
+        "crew welfare": ["crew accommodation", "crew fatigue", "food and catering", "medical care onboard"],
+        "crew repatriation": ["seafarer repatriation", "crew abandonment", "MLC financial security"]
+      }
+    },
+    "stcw": {
+      "triggers": ["stcw", "standards of training certification and watchkeeping"],
+      "related": ["STCW certificate", "certificate of competency", "COC", "watchkeeping officer", "deck officer certificate", "engine officer certificate", "STCW training", "rest hours", "hours of rest violation"],
+      "narrow": {
+        "rest hours": ["hours of rest", "work rest hours", "fatigue management", "rest hour violation"]
+      }
+    },
+    "isps": {
+      "triggers": ["isps", "isps code", "international ship and port facility security"],
+      "related": ["ship security plan", "ship security officer", "company security officer", "port facility security officer", "security level", "security assessment", "declaration of security", "ISPS inspection", "security drill"],
+      "narrow": {
+        "ship security plan": ["SSP", "ship security assessment", "security level 2", "security level 3"]
+      }
+    },
+    "cii": {
+      "triggers": ["cii", "carbon intensity indicator"],
+      "related": ["CII rating", "CII compliance", "CII correction factor", "CII improvement plan", "carbon efficiency", "SEEMP Part III", "IMO decarbonization", "operational carbon intensity"],
+      "narrow": {
+        "CII rating": ["A rating", "B rating", "C rating", "D rating", "E rating", "CII correction factor"]
+      }
+    },
+    "eexi": {
+      "triggers": ["eexi", "energy efficiency existing ship index"],
+      "related": ["EEXI compliance", "EEXI certificate", "engine power limitation", "EPL", "shaft power limitation", "SHaPoLi", "technical efficiency", "energy efficiency certificate"],
+      "narrow": {
+        "EPL": ["engine power limitation", "EPL override", "EPL management plan"]
+      }
+    },
+    "eu_ets": {
+      "triggers": ["eu ets", "emissions trading system shipping", "shipping ets"],
+      "related": ["EU ETS shipping", "emission allowance", "carbon allowance", "MRV regulation", "EU MRV", "shipping emissions", "charterparty ETS clause", "ETS surcharge", "FuelEU Maritime"],
+      "narrow": {
+        "FuelEU Maritime": ["FuelEU penalty", "GHG intensity", "pooling mechanism", "renewable fuels"]
+      }
+    },
+    "sanctions": {
+      "triggers": ["sanctions", "shipping sanctions", "maritime sanctions"],
+      "related": ["OFAC sanctions", "EU sanctions", "UK sanctions", "Russia sanctions", "Iran sanctions", "Syria sanctions", "Venezuela sanctions", "sanctions clause", "sanctions compliance", "price cap", "attestation clause", "shadow fleet", "AIS dark activity", "ship to ship transfer", "STS transfer"],
+      "narrow": {
+        "Russia sanctions": ["Russian oil price cap", "G7 price cap", "attestation clause", "shadow fleet"],
+        "Iran sanctions": ["Iranian oil trade", "AIS dark activity", "sanctioned tanker", "ship to ship transfer"],
+        "shadow fleet": ["dark fleet", "AIS manipulation", "STS transfer", "flag hopping"]
+      }
+    },
+    "war_risk": {
+      "triggers": ["war risk", "war risk area", "listed area"],
+      "related": ["additional war risk premium", "AWRP", "JWC listed area", "high risk area", "breach area", "war risk clause", "loss of hire insurance", "LOH insurance", "Red Sea risk", "Houthi attacks", "Gulf of Aden risk", "Gulf of Guinea piracy", "piracy risk", "armed guards"],
+      "narrow": {
+        "Red Sea risk": ["Houthi attacks", "Bab el Mandeb", "Gulf of Aden", "war risk premium"],
+        "piracy risk": ["BMP5", "armed guards", "citadel drill", "Gulf of Guinea piracy"]
+      }
+    },
+    "pi": {
+      "triggers": ["p&i", "p&i club", "protection and indemnity"],
+      "related": ["P&I cover", "P&I claim", "P&I correspondent", "club correspondent", "P&I surveyor", "International Group of P&I", "mutual insurance", "letter of undertaking", "LOU security", "cargo claim", "pollution claim", "crew claim", "wreck removal"],
+      "narrow": {
+        "P&I surveyor": ["cargo surveyor", "condition surveyor", "pre loading survey", "damage survey"],
+        "letter of undertaking": ["LOU security", "P&I undertaking", "claim security", "ship arrest security"]
+      }
+    },
+    "hull_machinery": {
+      "triggers": ["h&m", "hull and machinery", "hull insurance"],
+      "related": ["hull damage", "machinery damage", "main engine damage", "propeller damage", "rudder damage", "collision damage", "grounding damage", "H&M claim", "average adjuster", "loss of hire", "LOH insurance"],
+      "narrow": {
+        "machinery damage": ["main engine damage", "auxiliary engine damage", "boiler damage", "turbocharger damage"],
+        "hull damage": ["shell plating damage", "bottom damage", "side shell damage", "structural damage"]
+      }
+    },
+    "fdd": {
+      "triggers": ["fdd", "fd&d", "freight demurrage defence"],
+      "related": ["legal costs cover", "charterparty dispute", "demurrage dispute", "hire dispute", "freight dispute", "arbitration costs", "LMAA arbitration", "maritime dispute"],
+      "narrow": {
+        "charterparty dispute": ["hire dispute", "off hire dispute", "performance claim", "demurrage claim"]
+      }
+    },
+    "general_average": {
+      "triggers": ["ga", "general average"],
+      "related": ["York Antwerp Rules", "GA contribution", "average bond", "average guarantee", "GA adjustment", "general average security", "sacrifice and expenditure", "salvage contribution"],
+      "narrow": {
+        "average bond": ["average guarantee", "cargo security", "GA security"],
+        "York Antwerp Rules": ["YAR 1994", "YAR 2016", "general average adjustment"]
+      }
+    },
+    "salvage": {
+      "triggers": ["salvage", "lof", "lloyd's open form"],
+      "related": ["LOF salvage", "Lloyd's Open Form", "SCOPIC", "salvage award", "salvage security", "place of refuge", "wreck removal", "emergency towage", "casualty response"],
+      "narrow": {
+        "SCOPIC": ["SCOPIC remuneration", "salvage remuneration", "Article 14 salvage"],
+        "place of refuge": ["casualty vessel", "emergency response", "port of refuge"]
+      }
+    },
+    "loi": {
+      "triggers": ["loi", "letter of indemnity"],
+      "related": ["LOI wording", "indemnity letter", "delivery without original bill", "non presentation of original bill", "switch bill of lading", "split bill of lading", "cargo release", "misdelivery claim", "owners approval", "charterers LOI"],
+      "narrow": {
+        "delivery without original bill": ["non presentation of OBL", "cargo release without OBL", "misdelivery claim", "P&I cover prejudice"],
+        "switch bill of lading": ["cancelled bill of lading", "null and void", "replacement bill of lading", "LOI wording"]
+      }
+    },
+    "bill_of_lading": {
+      "triggers": ["b/l", "bill of lading", "bills of lading"],
+      "related": ["original bill of lading", "copy bill of lading", "non negotiable bill", "clean bill of lading", "claused bill of lading", "switch bill of lading", "split bill of lading", "surrendered bill of lading", "sea waybill", "mate's receipt", "consignee", "notify party", "endorsement"],
+      "narrow": {
+        "original bill of lading": ["OBL", "non presentation of OBL", "delivery order", "cargo release"],
+        "claused bill of lading": ["remarked bill of lading", "mate's receipt remarks", "cargo condition remarks"],
+        "switch bill of lading": ["replacement bill of lading", "cancelled bill of lading", "null and void"]
+      }
+    },
+    "nor": {
+      "triggers": ["nor", "notice of readiness"],
+      "related": ["NOR tendering", "valid NOR", "invalid NOR", "laytime commencement", "WIBON", "WIPON", "WIFPON", "free pratique", "customs clearance", "arrived ship", "reachable on arrival"],
+      "narrow": {
+        "invalid NOR": ["premature NOR", "free pratique", "customs clearance", "arrived ship"],
+        "WIBON": ["whether in berth or not", "berth congestion", "laytime counting"],
+        "WIPON": ["whether in port or not", "port limits", "arrived ship"]
+      }
+    },
+    "laytime": {
+      "triggers": ["laytime", "laytime calculation"],
+      "related": ["allowed laytime", "laytime statement", "laytime commencement", "time counting", "running days", "working days", "weather working day", "SHEX", "SHINC", "FHINC", "FHEX", "demurrage", "despatch", "time bar"],
+      "narrow": {
+        "weather working day": ["WWD", "PWWD", "weather interruption", "rain interruption"],
+        "SHEX": ["Sundays holidays excepted", "working days", "holiday exception"],
+        "SHINC": ["Sundays holidays included", "running days", "laytime counting"]
+      }
+    },
+    "demurrage": {
+      "triggers": ["demurrage", "demurrage claim"],
+      "related": ["laytime exceeded", "demurrage calculation", "demurrage rate", "time bar", "statement of facts", "SOF", "notice of readiness", "laytime statement", "despatch", "deadfreight", "detention claim"],
+      "narrow": {
+        "time bar": ["supporting documents", "demurrage time bar", "claim presentation", "charterparty time limit"],
+        "statement of facts": ["SOF", "port log", "laytime statement", "NOR tendering"]
+      }
+    },
+    "performance_claims": {
+      "triggers": ["speed claim", "performance claim", "speed and consumption claim", "underperformance claim"],
+      "related": ["overconsumption claim", "speed warranty", "consumption warranty", "good weather day", "good weather period", "weather routing", "hindcast weather", "master weather log", "noon report", "Beaufort scale", "Douglas sea scale", "current deduction", "positive current", "about speed", "about consumption", "hull fouling", "bottom fouling", "slow steaming"],
+      "narrow": {
+        "good weather day": ["Beaufort scale", "Douglas sea scale", "weather routing", "hindcast weather"],
+        "overconsumption claim": ["fuel overconsumption", "bunker overconsumption", "consumption warranty", "performance warranty"],
+        "hull fouling": ["bottom fouling", "biofouling", "underwater cleaning", "propeller polishing"]
+      }
+    },
+    "bunkers": {
+      "triggers": ["bunker", "bunkers", "bunker fuel"],
+      "related": ["bunkering operation", "bunker delivery note", "BDN", "bunker sample", "MARPOL sample", "manifold sample", "drip sample", "fuel quality", "off spec bunkers", "bunker contamination", "bunker dispute", "FOBAS analysis", "fuel testing", "fuel change over", "VLSFO", "HSFO", "LSMGO", "MGO", "sulphur limit", "ECA fuel"],
+      "narrow": {
+        "off spec bunkers": ["fuel quality", "fuel testing", "FOBAS analysis", "bunker contamination"],
+        "fuel change over": ["changeover procedure", "RPM reduction", "ECA entry", "low sulphur fuel"],
+        "VLSFO": ["very low sulphur fuel oil", "0.5% sulphur fuel", "compliant fuel"]
+      }
+    },
+    "biofouling": {
+      "triggers": ["biofouling", "hull fouling", "bottom fouling"],
+      "related": ["marine growth", "underwater hull inspection", "underwater hull cleaning", "propeller cleaning", "propeller polishing", "hull performance loss", "fouling clause", "21 days fouling clause", "port stay fouling", "anchorage fouling", "diver inspection", "ROV inspection", "in water cleaning", "biofouling management plan", "biofouling record book"],
+      "narrow": {
+        "underwater hull cleaning": ["in water cleaning", "hull cleaning permit", "diver cleaning", "propeller polishing"],
+        "21 days fouling clause": ["port stay fouling", "anchorage stay", "underwater inspection", "charterers account"]
+      }
+    },
+    "imsbc": {
+      "triggers": ["imsbc", "imsbc code", "bulk cargo code"],
+      "related": ["Group A cargo", "Group B cargo", "Group C cargo", "cargo declaration", "shipper declaration", "moisture content", "transportable moisture limit", "TML certificate", "flow moisture point", "FMP", "liquefaction risk", "dynamic separation", "angle of repose", "trimming requirement", "cargo sampling", "cargo testing"],
+      "narrow": {
+        "Group A cargo": ["liquefaction risk", "TML certificate", "moisture content", "flow moisture point"],
+        "Group B cargo": ["chemical hazard", "self heating cargo", "toxic gas", "oxygen depletion"],
+        "cargo declaration": ["shipper declaration", "IMSBC declaration", "cargo information", "bulk cargo shipping name"]
+      }
+    },
+    "copper_concentrate": {
+      "triggers": ["copper concentrate", "copper concentrates"],
+      "related": ["concentrate cargo", "IMSBC Group A", "liquefaction risk", "moisture content", "TML certificate", "flow moisture point", "Chilean copper", "pre loading survey", "cargo sampling", "cargo testing", "can test", "hold inspection"],
+      "narrow": {
+        "liquefaction risk": ["IMSBC Group A", "TML certificate", "moisture content", "flow moisture point"],
+        "pre loading survey": ["P&I surveyor", "cargo sampling", "cargo declaration", "hold inspection"]
+      }
+    },
+    "grain": {
+      "triggers": ["grain", "grain cargo", "bulk grain"],
+      "related": ["wheat", "barley", "corn", "maize", "sorghum", "soybean", "grain rules", "shifting boards", "angle of repose", "grain stability", "grain fumigation", "phosphine fumigation", "cargo ventilation", "cargo sweat"],
+      "narrow": {
+        "grain fumigation": ["phosphine fumigation", "methyl bromide", "fumigation certificate", "gas free certificate"],
+        "cargo sweat": ["ship sweat", "cargo ventilation", "dew point", "moisture damage"]
+      }
+    },
+    "coal": {
+      "triggers": ["coal", "coal cargo"],
+      "related": ["thermal coal", "coking coal", "IMSBC Group B", "self heating coal", "methane emission", "carbon monoxide monitoring", "coal temperature", "oxygen depletion", "cargo ventilation", "spontaneous combustion", "coal fire"],
+      "narrow": {
+        "self heating coal": ["spontaneous combustion", "carbon monoxide monitoring", "coal temperature", "oxygen depletion"],
+        "methane emission": ["gas monitoring", "explosion risk", "ventilation restriction"]
+      }
+    },
+    "iron_ore": {
+      "triggers": ["iron ore", "iron ore fines"],
+      "related": ["ore fines", "IMSBC Group A", "liquefaction risk", "moisture content", "TML certificate", "Brazil iron ore", "Australia iron ore", "Capesize trade", "draft survey", "cargo shortage"],
+      "narrow": {
+        "iron ore fines": ["liquefaction risk", "IMSBC Group A", "moisture content", "TML certificate"]
+      }
+    },
+    "nickel_ore": {
+      "triggers": ["nickel ore", "laterite ore"],
+      "related": ["Philippine nickel ore", "Indonesian nickel ore", "IMSBC Group A", "liquefaction risk", "moisture content", "TML certificate", "can test", "cargo sampling", "cargo testing", "unsafe cargo"],
+      "narrow": {
+        "liquefaction risk": ["moisture content", "TML certificate", "flow moisture point", "cargo testing"]
+      }
+    },
+    "cargo_claims": {
+      "triggers": ["cargo claim", "cargo claims"],
+      "related": ["cargo shortage", "cargo damage", "cargo contamination", "cargo wet damage", "cargo sweat damage", "cargo discoloration", "rust damage", "short delivery", "short receipt", "outturn shortage", "draft survey shortage", "shore figure discrepancy", "cargo discrepancy", "cargo loss", "receiver claim", "shipper claim", "letter of protest"],
+      "narrow": {
+        "cargo shortage": ["short delivery", "short receipt", "outturn shortage", "draft survey shortage", "shore figure discrepancy"],
+        "cargo contamination": ["dirty cargo", "previous cargo residue", "tank contamination", "hold contamination"],
+        "rust damage": ["steel cargo damage", "pre shipment rust", "silver nitrate test", "steel survey"]
+      }
+    },
+    "hold_cleaning": {
+      "triggers": ["hold cleaning", "cargo hold cleaning", "hold washing"],
+      "related": ["cargo hold washing", "hold washing water", "wash water disposal", "MARPOL Annex V", "HME cargo residue", "non HME residue", "cargo residue declaration", "high pressure washing", "HP jet washing", "sloping plates washing", "upper hold washing", "bilge well cleaning", "hold cleanliness", "grain clean", "hospital clean", "normal clean", "swept clean", "cargo hold rejection"],
+      "narrow": {
+        "HME cargo residue": ["MARPOL Annex V", "hold wash water", "cargo residue declaration", "wash water disposal"],
+        "cargo hold rejection": ["pre loading inspection", "hold cleanliness", "surveyor rejection", "additional cleaning"]
+      }
+    },
+    "narcotics": {
+      "triggers": ["narcotic", "narcotics", "drug smuggling"],
+      "related": ["drug trafficking", "contraband cargo", "controlled substance", "cocaine seizure", "drug seizure", "crew drug test", "random drug testing", "zero tolerance policy", "anti drug inspection", "security search", "stowaway search", "ISPS Code", "ship security plan"],
+      "narrow": {
+        "cocaine seizure": ["drug seizure", "narcotic smuggling", "contraband cargo", "security search"],
+        "crew drug test": ["random drug testing", "zero tolerance policy", "MLC drug policy"],
+        "security search": ["stowaway search", "drug search", "ISPS security", "anti narcotic inspection"]
+      }
+    },
+    "stowaway": {
+      "triggers": ["stowaway", "stowaways"],
+      "related": ["stowaway search", "stowaway found onboard", "stowaway repatriation", "ISPS security", "ship security plan", "port security", "P&I stowaway claim", "immigration fine", "crew search"],
+      "narrow": {
+        "stowaway repatriation": ["immigration clearance", "P&I claim", "repatriation cost", "landing permit"]
+      }
+    },
+    "piracy": {
+      "triggers": ["piracy", "piracy risk", "maritime piracy"],
+      "related": ["armed robbery at sea", "Gulf of Guinea piracy", "Somalia piracy", "Gulf of Aden piracy", "BMP5", "armed guards", "citadel drill", "kidnap and ransom", "K&R insurance", "piracy attack", "suspicious approach"],
+      "narrow": {
+        "Gulf of Guinea piracy": ["kidnap and ransom", "armed robbery", "crew kidnapping", "piracy attack"],
+        "BMP5": ["best management practices", "citadel drill", "razor wire", "anti piracy measures"]
+      }
+    },
+    "port_operations": {
+      "triggers": ["port operations", "port agency", "shipping agency"],
+      "related": ["port agent", "shipping agent", "protective agent", "husbandry agent", "port disbursement account", "proforma DA", "final DA", "crew change", "immigration clearance", "customs clearance", "pilotage", "towage", "launch boat", "service boat", "berthing operation", "unberthing operation", "anchorage stay", "port congestion", "terminal access"],
+      "narrow": {
+        "crew change": ["immigration clearance", "shore pass", "crew visa", "crew boat", "launch boat"],
+        "port disbursement account": ["proforma DA", "final DA", "agency fee", "port charges"],
+        "service boat": ["launch boat", "boat service fee", "surveyor attendance", "terminal access"]
+      }
+    },
+    "draft_survey": {
+      "triggers": ["draft survey", "draught survey"],
+      "related": ["cargo weight determination", "draft survey report", "shore figure discrepancy", "cargo shortage", "outturn shortage", "load port draft survey", "discharge port draft survey", "density correction", "ballast calculation", "constant correction"],
+      "narrow": {
+        "shore figure discrepancy": ["draft survey shortage", "shore scale", "cargo shortage", "outturn discrepancy"]
+      }
+    },
+    "fumigation": {
+      "triggers": ["fumigation", "cargo fumigation"],
+      "related": ["phosphine fumigation", "methyl bromide", "fumigation certificate", "gas free certificate", "grain fumigation", "in transit fumigation", "fumigation tablets", "fumigant residue", "crew safety", "ventilation after fumigation"],
+      "narrow": {
+        "phosphine fumigation": ["phosphine gas", "fumigation tablets", "gas monitoring", "crew safety"]
+      }
+    },
+    "dangerous_goods": {
+      "triggers": ["dangerous goods", "dg cargo", "imdg"],
+      "related": ["IMDG Code", "dangerous goods declaration", "DG declaration", "misdeclared cargo", "undeclared dangerous goods", "packing group", "UN number", "container fire", "lithium battery fire", "hazardous cargo", "dangerous cargo manifest"],
+      "narrow": {
+        "misdeclared cargo": ["undeclared dangerous goods", "container fire", "IMDG violation", "DG declaration"],
+        "lithium battery fire": ["container fire", "thermal runaway", "dangerous goods container"]
+      }
+    },
+    "tanker_operations": {
+      "triggers": ["tanker operations", "tanker cargo", "cargo tank"],
+      "related": ["crude oil tanker", "product tanker", "chemical tanker", "cargo tank cleaning", "tank inspection", "wall wash test", "tank coating", "stainless steel tank", "coated tank", "crude oil washing", "COW operation", "load on top", "inert gas system", "closed loading", "vapour return", "ODME", "slop tank", "cargo heating", "ROB", "OBQ"],
+      "narrow": {
+        "wall wash test": ["methanol wall wash", "chloride test", "hydrocarbon test", "tank cleanliness"],
+        "ROB": ["remaining on board", "cargo residue", "ROB dispute", "tank inspection"],
+        "OBQ": ["on board quantity", "pre loading quantity", "OBQ inspection"]
+      }
+    },
+    "container_shipping": {
+      "triggers": ["container ship", "containership", "container shipping"],
+      "related": ["TEU capacity", "FEU", "reefer container", "reefer malfunction", "container lashing", "container stack collapse", "container loss", "dangerous goods container", "misdeclared cargo", "undeclared dangerous goods", "container fire", "lithium battery fire", "blank sailing", "port rotation", "transshipment", "slot charter", "detention and demurrage"],
+      "narrow": {
+        "container loss": ["lost containers", "stack collapse", "heavy weather", "lashing failure"],
+        "reefer malfunction": ["reefer cargo damage", "temperature deviation", "cold chain failure"],
+        "blank sailing": ["liner schedule", "cancelled sailing", "container freight"]
+      }
+    },
+    "class_survey": {
+      "triggers": ["class survey", "classification society", "class renewal"],
+      "related": ["special survey", "annual survey", "intermediate survey", "docking survey", "condition survey", "damage survey", "machinery survey", "hull survey", "CAP survey", "thickness measurement", "ultrasonic thickness measurement", "UTM survey", "class recommendation", "class condition", "class notation", "statutory certificate"],
+      "narrow": {
+        "special survey": ["class renewal", "drydock survey", "thickness measurement", "statutory renewal"],
+        "class recommendation": ["class condition", "condition of class", "due date", "survey overdue"],
+        "thickness measurement": ["UTM survey", "steel diminution", "hull survey", "corrosion measurement"]
+      }
+    },
+    "drydock": {
+      "triggers": ["drydock", "dry dock", "docking"],
+      "related": ["special survey", "docking survey", "hull blasting", "hull painting", "propeller polishing", "tailshaft survey", "rudder inspection", "sea chest cleaning", "anode renewal", "steel repair", "drydock period", "off hire drydock", "class renewal"],
+      "narrow": {
+        "tailshaft survey": ["stern tube", "shaft withdrawal", "tailshaft seal", "propeller removal"],
+        "steel repair": ["crop and renew", "hull plate renewal", "welding repair", "class approval"]
+      }
+    },
+    "marine_casualty": {
+      "triggers": ["marine casualty", "casualty", "shipping casualty"],
+      "related": ["grounding", "collision", "allision", "fire onboard", "engine breakdown", "main engine failure", "blackout", "loss of propulsion", "rudder failure", "flooding", "container loss", "cargo fire", "dangerous goods fire", "place of refuge", "salvage operation"],
+      "narrow": {
+        "grounding": ["refloating operation", "bottom damage", "salvage assistance", "pollution risk"],
+        "collision": ["collision liability", "both to blame collision", "hull damage", "collision claim"],
+        "fire onboard": ["cargo fire", "engine room fire", "firefighting operation", "crew evacuation"]
+      }
+    },
+    "pollution": {
+      "triggers": ["pollution", "marine pollution", "oil pollution"],
+      "related": ["oil spill", "bunker spill", "MARPOL violation", "OPA 90", "pollution fine", "pollution response", "pollution clean up", "bunker convention", "CLC Convention", "IOPC Fund", "waste discharge", "illegal discharge", "magic pipe"],
+      "narrow": {
+        "oil spill": ["pollution response", "clean up cost", "OPA 90", "P&I pollution claim"],
+        "illegal discharge": ["MARPOL violation", "magic pipe", "oil record book", "criminal fine"]
+      }
+    },
+    "shipping_markets": {
+      "triggers": ["shipping market", "freight market", "maritime market"],
+      "related": ["dry bulk market", "tanker market", "container freight", "freight rates", "spot market", "period market", "time charter equivalent", "TCE earnings", "Baltic Dry Index", "BDI", "Baltic Capesize Index", "Baltic Panamax Index", "Worldscale", "WS rate", "fixture report", "sale and purchase", "newbuilding order", "scrapping market", "fleet growth"],
+      "narrow": {
+        "dry bulk market": ["Baltic Dry Index", "Capesize market", "Panamax market", "Supramax market"],
+        "tanker market": ["Worldscale", "VLCC market", "Aframax market", "Suezmax market"],
+        "container freight": ["spot freight", "contract freight", "blank sailing", "liner market"]
+      }
+    },
+    "vessel_types": {
+      "triggers": ["vessel type", "ship type", "vessel types"],
+      "related": ["bulk carrier", "dry bulk carrier", "Capesize", "Panamax", "Supramax", "Handysize", "crude oil tanker", "product tanker", "chemical tanker", "VLCC", "Aframax", "Suezmax", "container ship", "LNG carrier", "LPG carrier", "ro-ro vessel", "offshore support vessel", "tugboat"],
+      "narrow": {
+        "bulk carrier": ["Capesize", "Panamax", "Supramax", "Handysize", "geared bulker"],
+        "crude oil tanker": ["VLCC", "Suezmax", "Aframax", "crude tanker"],
+        "product tanker": ["MR tanker", "LR1 tanker", "LR2 tanker", "clean product tanker"],
+        "LNG carrier": ["liquefied natural gas carrier", "boil off gas", "membrane tank", "Moss tank"]
+      }
+    },
+    "main_engine": {
+      "triggers": ["main engine", "main engine failure", "engine breakdown"],
+      "related": ["main engine damage", "main engine breakdown", "main engine failure", "loss of propulsion", "engine room casualty", "slow steaming", "engine derating", "engine power limitation", "EPL", "ME cylinder liner", "piston ring damage", "piston crown damage", "crankshaft damage", "bearing damage", "main bearing failure", "crankpin bearing", "turbocharger failure", "fuel pump failure", "exhaust valve damage", "scavenge fire", "jacket cooling water", "lubricating oil pressure", "engine alarm", "engine shutdown"],
+      "narrow": {
+        "main engine failure": ["loss of propulsion", "engine shutdown", "engine room casualty", "towage assistance"],
+        "turbocharger failure": ["turbocharger damage", "loss of power", "exhaust gas temperature", "engine derating"],
+        "bearing damage": ["main bearing failure", "crankpin bearing", "lubricating oil contamination", "crankshaft damage"]
+      }
+    },
+    "auxiliary_engine": {
+      "triggers": ["auxiliary engine", "generator engine", "diesel generator"],
+      "related": ["auxiliary engine failure", "diesel generator failure", "generator blackout", "blackout", "power failure", "engine room blackout", "emergency generator", "generator bearing damage", "alternator failure", "fuel injector failure", "lubricating oil pressure", "cooling water leakage", "overload trip", "electrical failure"],
+      "narrow": {
+        "blackout": ["power failure", "generator trip", "emergency generator", "loss of steering"],
+        "emergency generator": ["SOLAS requirement", "emergency power", "emergency switchboard", "blackout recovery"]
+      }
+    }
+  }
+}
