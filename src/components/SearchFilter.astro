@@ -242,6 +242,7 @@ const SYNONYMS_DEPRECATED: Record<string, string[]> = {
       <button id="sf-related-btn" type="button" class="sf-chip">Related terms ▾</button>
       <div id="sf-related-panel" class="hidden absolute z-20 mt-1 w-80 bg-white border border-slate-200 rounded-lg shadow-lg p-2">
         <div id="sf-related-title" class="text-[10px] font-bold uppercase tracking-wide text-slate-400 px-1 pb-1">Related terms</div>
+        <p class="px-1 pb-1.5 text-[11px] leading-snug text-slate-500 border-b border-slate-100 mb-1">All searched by default — untick any term you don't want included.</p>
         <div id="sf-related-list" class="max-h-72 overflow-y-auto pr-1"></div>
       </div>
     </div>
@@ -287,12 +288,12 @@ const SYNONYMS_DEPRECATED: Record<string, string[]> = {
   </div>
   {/* Grouped results: Best matches (exact phrase / topic) then Broader matches (words appear separately) */}
   <div id="sf-best-wrap" class="hidden">
-    <h3 class="sf-group-label">Best matches</h3>
+    <h3 class="sf-group-label">Best matches <span class="sf-group-sub">Closest matches to your search</span></h3>
     <div id="sf-best" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4"></div>
     <div class="mt-4 mb-8 text-center"><button id="sf-best-more" class="hidden px-4 py-2 rounded-lg border border-slate-300 text-sm text-slate-700 hover:border-slate-400">Load more</button></div>
   </div>
   <div id="sf-broader-wrap" class="hidden">
-    <h3 class="sf-group-label">Broader matches <span class="sf-group-sub">— words appear separately; may be less on-topic</span></h3>
+    <h3 class="sf-group-label">Broader matches <span class="sf-group-sub">Your words appear, but maybe not together — less focused</span></h3>
     <div id="sf-broader" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4"></div>
     <div class="mt-4 text-center"><button id="sf-broader-more" class="hidden px-4 py-2 rounded-lg border border-slate-300 text-sm text-slate-700 hover:border-slate-400">Load more</button></div>
   </div>
@@ -793,8 +794,13 @@ const SYNONYMS_DEPRECATED: Record<string, string[]> = {
       if (!quoted) {
         if (raw) { if (multiWord) addU(strong, '"' + raw + '"'); addU(broad, raw); }
         if (rel) {
+          // Seeds = topic trigger forms: multi-word expansions are strong (Best);
+          // a single-word seed is the broad raw token (e.g. "grain", "psc") → Broader base.
           (rel.seeds || []).forEach(function (t) { if (isPhrase(t)) addU(strong, '"' + t + '"'); else addU(broad, t); });
-          rel.terms.forEach(function (t) { if (relSel.has(t)) { if (isPhrase(t)) addU(strong, '"' + t + '"'); else addU(broad, t); } });
+          // Selected CHIPS are curated, specific terms → ALWAYS Best, single-word too
+          // (e.g. grain's "wheat"/"soybean" are specific commodities, not broad noise;
+          // broad words are already filtered out of chips via blockedSingleWordRelatedTerms).
+          rel.terms.forEach(function (t) { if (relSel.has(t)) addU(strong, isPhrase(t) ? '"' + t + '"' : t); });
         }
       }
       var filt = filtersObj();
@@ -1041,7 +1047,7 @@ const SYNONYMS_DEPRECATED: Record<string, string[]> = {
     text-align: center; text-transform: uppercase; letter-spacing: 0.03em;
     margin: 28px 0 16px;
   }
-  .sf-group-sub { display: block; margin-top: 0.25rem; font-size: 0.72rem; font-weight: 500; text-transform: none; letter-spacing: 0; color: #94a3b8; }
+  .sf-group-sub { display: block; margin-top: 0.3rem; font-size: 0.8rem; font-weight: 500; text-transform: none; letter-spacing: 0; color: #64748b; }
 
   /* Active-filter pills — bigger, easy × target. */
   .sf-pill {
