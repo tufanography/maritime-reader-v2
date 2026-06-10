@@ -279,6 +279,12 @@ const SYNONYMS_DEPRECATED: Record<string, string[]> = {
     <div class="sf-sonar" aria-hidden="true"><span></span><span></span><span></span></div>
     <p class="text-xl font-semibold text-slate-600 tracking-tight mt-5">Searching the archive…</p>
   </div>
+  {/* Sort toggle — shown only for a plain text query (where relevance is a choice) */}
+  <div id="sf-sort" class="hidden mb-4 flex items-center gap-2 text-xs">
+    <span class="text-slate-500 font-semibold uppercase tracking-wide">Sort</span>
+    <button id="sf-sort-rel" type="button" class="sf-sort-btn on">Relevance</button>
+    <button id="sf-sort-date" type="button" class="sf-sort-btn">Newest</button>
+  </div>
   <div id="sf-results" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4"></div>
   <div class="mt-6 text-center">
     <button id="sf-more" class="hidden px-4 py-2 rounded-lg border border-slate-300 text-sm text-slate-700 hover:border-slate-400">Load more</button>
@@ -288,13 +294,11 @@ const SYNONYMS_DEPRECATED: Record<string, string[]> = {
 
 <script is:inline define:vars={{ base }}>
   (function () {
-    // Date-sort needs data-pagefind-sort indexed. The article template emits it,
-    // but it only reaches the LIVE index after a _pagefind REGEN (B3). Requesting
-    // sort:{date} on an index that LACKS the sort key returns results (count is
-    // right) but BREAKS result rendering → 0 cards (proven live 2026-06-07; local
-    // passed only because its regen had the key). So keep DATE_SORT off until B3's
-    // regen lands, then flip to true. Until then, browse falls back to relevance.
-    var DATE_SORT = true; // B3 (2026-06-08): data-pagefind-sort="date" is now in the regenerated index
+    // NOTE: date sort uses data-pagefind-sort="date" (in the regenerated index since
+    // B3, 2026-06-08). Sort mode is now chosen per-run in run() (relevance for plain
+    // text queries, date for browse / multi-term chip merges + the "Newest" toggle) —
+    // see the SORT MODE block. Requesting sort:{date} on an index lacking the key
+    // returns a right count but 0 rendered cards, so never use date sort pre-regen.
     var CHIP_FACETS = ['type', 'segment', 'theme']; // source is a dropdown
     var ALL_FACETS = ['type', 'segment', 'theme', 'source'];
     var FACET_LABEL = { type: 'Type', segment: 'Segment', theme: 'Theme' };
@@ -344,6 +348,9 @@ const SYNONYMS_DEPRECATED: Record<string, string[]> = {
     var relatedPanel = document.getElementById('sf-related-panel');
     var relatedTitle = document.getElementById('sf-related-title');
     var relatedList = document.getElementById('sf-related-list');
+    var sortWrap = document.getElementById('sf-sort');
+    var sortRelBtn = document.getElementById('sf-sort-rel');
+    var sortDateBtn = document.getElementById('sf-sort-date');
     if (!qEl) return;
 
     // Custom search-clear × (native type=search × is hidden in is:global; it
@@ -361,6 +368,8 @@ const SYNONYMS_DEPRECATED: Record<string, string[]> = {
     var seenUrls = {};   // dedup base+delta overlap AND cross-term overlap, by url, at render
     var relKey = null;       // identity (title) of the currently matched panel, or null
     var relSel = new Set();  // related/narrow terms the user has SELECTED to include
+    var sortPref = null;     // null = auto (relevance for text queries); 'date' = user chose Newest
+    var mergeByDate = true;  // set per-run: true = date k-way merge, false = relevance order
 
     // 3-layer maritime search map (Phase A 2026-06-10): loaded at runtime from a
     // static JSON (/maritime-search-map.json) — NOT inlined into the HTML. Matching:
@@ -494,6 +503,7 @@ const SYNONYMS_DEPRECATED: Record<string, string[]> = {
     // fast 70ms transition, hover-lift, pressed-when-active). Kept out of Tailwind
     // utility strings so the JS-built buttons get full, instant styling.
     function chipClass(on) { return 'sf-chip' + (on ? ' on' : ''); }
+    function sortBtnClass(on) { return 'sf-sort-btn' + (on ? ' on' : ''); }
     var chipEls = {}; // facet -> [{value, btn}]
 
     // Build the facet UI ONCE (init only). pf.filters() is ~2.4s on 51k — never
@@ -634,7 +644,11 @@ const SYNONYMS_DEPRECATED: Record<string, string[]> = {
       var t = d ? new Date(d).getTime() : NaN;
       return isNaN(t) ? -Infinity : t; // undated sinks to the bottom
     }
-    // Pull the next `n` globally date-newest, de-duplicated results.
+    // Pull the next `n` de-duplicated results. mergeByDate=true → globally
+    // date-newest across streams (k-way merge, for browse + multi-term chip merges).
+    // mergeByDate=false → walk the single stream in Pagefind's RELEVANCE order
+    // (text query with no chip expansion; relevance scores aren't comparable across
+    // different search terms, so relevance is only used when there is one stream).
     async function pullNext(n) {
       var out = [];
       while (out.length < n) {
@@ -643,6 +657,7 @@ const SYNONYMS_DEPRECATED: Record<string, string[]> = {
         for (var i = 0; i < streams.length; i++) {
           var r = streams[i].results[streams[i].idx];
           if (!r) continue;
+          if (!mergeByDate) { best = i; break; } // relevance: first stream with items, in order
           var t = dateOf(r);
           if (best === -1 || t > bestT) { best = i; bestT = t; }
         }
@@ -738,10 +753,24 @@ const SYNONYMS_DEPRECATED: Record<string, string[]> = {
       var terms = [sel.q];
       if (rel) rel.terms.forEach(function (t) { if (relSel.has(t)) terms.push(/\s/.test(t) ? '"' + t + '"' : t); });
 
-      // Newest-first for ALL results — browse AND text queries (user, 2026-06-08).
-      // Pagefind's `sort` overrides relevance; the date key is in the index (B3).
+      // SORT MODE (user 2026-06-10): a text query defaults to RELEVANCE so loose
+      // word-matches don't float to the top by date (the "cargo damage" → unrelated
+      // article problem — "cargo" + "damage" matched in scattered/boilerplate text).
+      // Relevance only when there is exactly ONE stream (no chip expansion) — across
+      // multiple terms Pagefind relevance scores aren't comparable, and browse/no-query
+      // has no relevance signal, so those keep date. A visible "Relevance | Newest"
+      // toggle lets the user force date on a plain text query. Quoted = exact (Pagefind).
+      var hasQuery = !!sel.q;
+      var canRelevance = hasQuery && terms.length === 1;   // relevance is meaningful here
+      var useRelevance = canRelevance && sortPref !== 'date';
+      mergeByDate = !useRelevance;
+      if (sortWrap) {
+        sortWrap.classList.toggle('hidden', !canRelevance);
+        if (sortRelBtn) sortRelBtn.className = sortBtnClass(useRelevance);
+        if (sortDateBtn) sortDateBtn.className = sortBtnClass(!useRelevance);
+      }
       var opts = { filters: filtersObj() };
-      if (DATE_SORT) opts.sort = { date: 'desc' };
+      if (!useRelevance) opts.sort = { date: 'desc' };
 
       var searches;
       try { searches = await Promise.all(terms.map(function (t) { return pf.search(t || null, opts); })); }
@@ -757,6 +786,9 @@ const SYNONYMS_DEPRECATED: Record<string, string[]> = {
       streams.forEach(function (s) { for (var i = 0; i < s.results.length; i++) idset[s.results[i].id] = 1; });
       var total = Object.keys(idset).length;
       countEl.textContent = total.toLocaleString('en-US') + ' result' + (total === 1 ? '' : 's');
+      if (sortWrap && total === 0) sortWrap.classList.add('hidden'); // nothing to sort
+
+
 
       // A data()/render failure must never blank the feed — render whatever resolved.
       try { await renderMore(); } catch (e) {}
@@ -766,6 +798,9 @@ const SYNONYMS_DEPRECATED: Record<string, string[]> = {
     }
 
     moreBtn.addEventListener('click', async function () { await renderMore(); });
+    // Sort toggle: Relevance (default for text queries) vs Newest (date).
+    if (sortRelBtn) sortRelBtn.addEventListener('click', function () { if (sortPref !== null) { sortPref = null; run(); } });
+    if (sortDateBtn) sortDateBtn.addEventListener('click', function () { if (sortPref !== 'date') { sortPref = 'date'; run(); } });
     clearBtn.addEventListener('click', function () {
       sel.q = ''; qEl.value = ''; ALL_FACETS.forEach(function (k) { sel[k] = new Set(); }); syncQClear(); run();
     });
@@ -774,6 +809,7 @@ const SYNONYMS_DEPRECATED: Record<string, string[]> = {
     });
     qEl.addEventListener('input', function () {
       sel.q = qEl.value.trim();
+      sortPref = null; // a new/edited query defaults back to Relevance
       syncQClear();
       clearTimeout(debounce);
       // Short queries match a huge slice of the 51k index — heavy + useless, and
@@ -913,6 +949,16 @@ const SYNONYMS_DEPRECATED: Record<string, string[]> = {
   }
   .sf-chip.on:hover { transform: translateY(0); box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.35); border-color: #0f172a; }
   .sf-chip .cnt { opacity: 0.6; font-weight: 500; }
+
+  /* Sort toggle (Relevance / Newest) — small segmented pills. */
+  .sf-sort-btn {
+    padding: 0.2rem 0.7rem; border-radius: 9999px;
+    border: 1px solid #cbd5e1; background: #fff; color: #475569;
+    font-size: 0.72rem; font-weight: 600; cursor: pointer;
+    transition: background-color 70ms ease, color 70ms ease, border-color 70ms ease;
+  }
+  .sf-sort-btn:hover { border-color: #94a3b8; }
+  .sf-sort-btn.on { background: #0f172a; color: #fff; border-color: #0f172a; }
 
   /* Active-filter pills — bigger, easy × target. */
   .sf-pill {
