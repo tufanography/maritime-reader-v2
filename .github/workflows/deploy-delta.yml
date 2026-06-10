@@ -1,4 +1,4 @@
-# DELTA + FEED deploy — every 3 hours.
+# DELTA + FEED deploy — every 2 hours, at :37 past the hour.
 # Keeps the homepage feed AND search ~3h-fresh without re-reading all 51k rows
 # from Supabase Nano: a light build (ARTICLE_PAGE_LIMIT=1500 ≈ last ~2 weeks,
 # ~2.7s / 2.6MB DB read — measured 2026-06-08) produces the feed + recent article
@@ -10,7 +10,7 @@
 name: deploy-delta
 on:
   schedule:
-    - cron: '0 */2 * * *'   # every 2 hours (UTC) — R2 incremental upload makes this cheap (~97-1300 files/run, ~150k/mo << 1M free); public repo = unlimited GHA
+    - cron: '37 */2 * * *'  # every 2h at :37 (UTC). NOT :00 — GitHub silently drops scheduled runs queued on the contended top-of-hour minute (measured 2026-06-10: the :00 02h & 04h runs never fired, leaving the site on a 4h-stale snapshot). An odd off-peak minute is far less likely to be dropped. R2 incremental upload makes each run cheap (~97-1300 files, ~150k/mo << 1M free); public repo = unlimited GHA.
   workflow_dispatch:         # manual run button
 # Serialize with deploy-base so the two never race the R2 manifest.
 concurrency:
