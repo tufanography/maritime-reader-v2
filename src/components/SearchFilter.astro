@@ -503,8 +503,9 @@ const SYNONYMS_DEPRECATED: Record<string, string[]> = {
       if (matched && matched.length) {
         var shownM = matched.slice(0, 3), extraM = matched.length - shownM.length;
         matchHtml = '<span class="sf-match" title="Found via: ' + esc(matched.join(', ')) + '">' +
-          '<span class="sf-match-lbl">Matched:</span> ' + shownM.map(esc).join(' · ') +
-          (extraM > 0 ? ' <span class="sf-match-more">+' + extraM + ' more</span>' : '') + '</span>';
+          '<span class="sf-match-lbl">Matched:</span>' +
+          shownM.map(function (m) { return '<span class="sf-mtag">' + esc(m) + '</span>'; }).join('') +
+          (extraM > 0 ? '<span class="sf-mtag sf-mtag-more">+' + extraM + ' more</span>' : '') + '</span>';
       }
       var title = meta.title || 'Untitled';
       var source = meta.source || (f.source && f.source[0]) || '';
@@ -1124,10 +1125,12 @@ const SYNONYMS_DEPRECATED: Record<string, string[]> = {
   }
   .sf-group-sub { display: block; margin-top: 0.3rem; font-size: 0.8rem; font-weight: 500; text-transform: none; letter-spacing: 0; color: #64748b; }
 
-  /* Per-card "Matched by" tag — one truncated line, muted */
-  .sf-match { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #64748b; }
+  /* Per-card "Matched by" tags — each term in a small framed badge */
+  .sf-match { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 0.25rem; color: #64748b; }
   .sf-match-lbl { font-weight: 700; color: #94a3b8; }
-  .sf-match-more { color: #0284c7; font-weight: 600; }
+  .sf-mtag { display: inline-block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    padding: 0.05rem 0.45rem; border: 1px solid #cbd5e1; border-radius: 9999px; background: #f8fafc; color: #475569; font-size: 0.7rem; line-height: 1.45; }
+  .sf-mtag-more { border-style: dashed; color: #0284c7; background: #fff; }
 
   /* Per-chip result count in the related dropdown */
   .sf-chip-cnt { margin-left: auto; padding-left: 0.5rem; font-size: 0.72rem; color: #94a3b8; font-variant-numeric: tabular-nums; }
