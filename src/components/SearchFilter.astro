@@ -443,7 +443,7 @@ const SYNONYMS_DEPRECATED: Record<string, string[]> = {
       if (!t) return null;
       // seeds = strong "Best" seed phrases the match itself implies (topic triggers,
       // or the matched narrow/related key) — fed into Best alongside the selected chips.
-      if (TRIGGERS[t]) { var m = TRIGGERS[t]; return { title: m.label, terms: filterBlocked(MAP[m.topic].related), seeds: (MAP[m.topic].triggers || []).slice() }; }
+      if (TRIGGERS[t]) { var m = TRIGGERS[t]; return { title: m.label, terms: filterBlocked(MAP[m.topic].related), seeds: (MAP[m.topic].triggers || []).slice(), exact: !!MAP[m.topic].exact }; }
       if (NARROW[t]) { var nn = NARROW[t]; return { title: nn.key, terms: filterBlocked(MAP[nn.topic].narrow[nn.key]), seeds: [nn.key] }; }
       if (RELATED[t]) { var rr = RELATED[t]; var nar = MAP[rr.topic].narrow && MAP[rr.topic].narrow[rr.term]; return nar ? { title: rr.term, terms: filterBlocked(nar), seeds: [rr.term] } : null; }
       // A broad single word ("cargo", "inspection", "crew"...) must NOT prefix-expand
@@ -453,7 +453,7 @@ const SYNONYMS_DEPRECATED: Record<string, string[]> = {
       if (t.length >= 3) {
         var best = null;
         for (var i = 0; i < TRIGGER_NORMS.length; i++) { var tn = TRIGGER_NORMS[i]; if (tn.indexOf(t) === 0 && (!best || tn.length < best.length)) best = tn; }
-        if (best) { var bm = TRIGGERS[best]; return { title: bm.label, terms: filterBlocked(MAP[bm.topic].related), seeds: (MAP[bm.topic].triggers || []).slice() }; }
+        if (best) { var bm = TRIGGERS[best]; return { title: bm.label, terms: filterBlocked(MAP[bm.topic].related), seeds: (MAP[bm.topic].triggers || []).slice(), exact: !!MAP[bm.topic].exact }; }
       }
       return null;
     }
@@ -763,8 +763,10 @@ const SYNONYMS_DEPRECATED: Record<string, string[]> = {
     function renderActiveTerms() {
       if (!termsEl) return;
       var items = [];
-      if (sel.q) items.push({ label: sel.q, kind: 'q', countKey: sel.q.replace(/^"|"$/g, '') });
-      if (relKey) relSel.forEach(function (t) { items.push({ label: t, kind: 'chip' }); });
+      var seenLbl = {};
+      function normLbl(s) { return s.replace(/^"|"$/g, '').trim().toLowerCase(); }
+      if (sel.q) { items.push({ label: sel.q, kind: 'q', countKey: sel.q.replace(/^"|"$/g, '') }); seenLbl[normLbl(sel.q)] = true; }
+      if (relKey) relSel.forEach(function (t) { if (seenLbl[normLbl(t)]) return; seenLbl[normLbl(t)] = true; items.push({ label: t, kind: 'chip' }); });
       if (!items.length) { termsEl.innerHTML = ''; termsEl.classList.add('hidden'); termsEl.classList.remove('flex'); return; }
       termsEl.innerHTML = items.map(function (it) {
         var c = activeCount(it.countKey || it.label);
@@ -861,6 +863,13 @@ const SYNONYMS_DEPRECATED: Record<string, string[]> = {
       var multiWord = !!raw && /\s/.test(raw.trim());
       function isPhrase(t) { return /\s/.test(t); }
       function addU(arr, t) { if (t && arr.indexOf(t) === -1) arr.push(t); }
+      // termForm: multi-word terms always search as exact phrases; on a SPELLING/VARIANT
+      // topic (rel.exact) single-token terms are ALSO searched quoted = EXACT match — this
+      // catches author-side joined-typos (e.g. "hatchcover" → 5 real articles, "cargohold"
+      // → 1) while killing Pagefind's prefix/stem NOISE for forms nobody writes
+      // ("hatchcoaming"/"mainengine" → 0). MEASURED 2026-06-11. Quoting a real single word
+      // (lifeboat/crankshaft) returns the same count, so it is always safe here.
+      function termForm(t) { return (isPhrase(t) || (rel && rel.exact)) ? '"' + t + '"' : t; }
       var strong = [], broad = [], singleTerms = [];
       if (!quoted) {
         if (multiWord) {
@@ -868,16 +877,16 @@ const SYNONYMS_DEPRECATED: Record<string, string[]> = {
           if (raw) { addU(strong, '"' + raw + '"'); addU(broad, raw); }
           if (rel) {
             (rel.seeds || []).forEach(function (t) { if (isPhrase(t)) addU(strong, '"' + t + '"'); });
-            rel.terms.forEach(function (t) { if (relSel.has(t)) addU(strong, isPhrase(t) ? '"' + t + '"' : t); });
+            rel.terms.forEach(function (t) { if (relSel.has(t)) addU(strong, termForm(t)); });
           }
         } else if (raw) {
           // SINGLE WORD → ONE merged list, NO Best/Broader split (a single word can't
           // "scatter", so the split only confuses — user 2026-06-11, the "grain" case).
           // List = raw word + topic trigger forms + selected chips; chips still apply.
-          addU(singleTerms, raw);
+          addU(singleTerms, (rel && rel.exact) ? '"' + raw + '"' : raw);
           if (rel) {
-            (rel.seeds || []).forEach(function (t) { addU(singleTerms, isPhrase(t) ? '"' + t + '"' : t); });
-            rel.terms.forEach(function (t) { if (relSel.has(t)) addU(singleTerms, isPhrase(t) ? '"' + t + '"' : t); });
+            (rel.seeds || []).forEach(function (t) { addU(singleTerms, termForm(t)); });
+            rel.terms.forEach(function (t) { if (relSel.has(t)) addU(singleTerms, termForm(t)); });
           }
         }
       }
