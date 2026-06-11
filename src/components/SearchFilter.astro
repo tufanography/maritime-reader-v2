@@ -645,7 +645,8 @@ const SYNONYMS_DEPRECATED: Record<string, string[]> = {
           '<button data-k="' + esc(k) + '" data-v="' + esc(val) + '" class="sf-pill-x" aria-label="remove">×</button></span>';
       }
       var html = '';
-      if (sel.q) html += pill('“' + sel.q + '”', 'q', '');
+      // NOTE: the query is shown (with its count + ×) in #sf-terms (renderActiveTerms),
+      // not here — avoids the duplicate query pill. #sf-chips = facet/source pills only.
       CHIP_FACETS.forEach(function (k) {
         sel[k].forEach(function (v) { html += pill(k === 'type' ? (TYPE_LABEL[v] || v) : v, k, v); });
       });
@@ -723,9 +724,18 @@ const SYNONYMS_DEPRECATED: Record<string, string[]> = {
       }
       return out;
     }
-    async function renderGroup(g, containerEl, moreBtn) {
+    // `tok` ties this render to the search run that started it (run()'s token, or the
+    // token captured at load-more click time). pullGroup awaits data() (network on
+    // cold cdn), so a NEWER search can fire — bumping `pending` and clearing the
+    // containers — WHILE this render is still in-flight. Without the guard, this
+    // superseded render would insertAdjacentHTML its now-stale cards into the freshly
+    // cleared container → count(new) ≠ cards, plus leftover cards from the old query
+    // (the consecutive-search duplication/false-match bug, measured 2026-06-11).
+    // Re-check `pending === tok` AFTER the await, immediately before the DOM append.
+    async function renderGroup(g, containerEl, moreBtn, tok) {
       if (!g) return 0;
       var batch = await pullGroup(g, PAGE);   // only PAGE cards reach the DOM per call
+      if (tok !== undefined && pending !== tok) return 0; // superseded by a newer search → drop this append
       var html = '';
       for (var i = 0; i < batch.length; i++) html += card(batch[i].__data, matchedFor(batch[i].id));
       containerEl.insertAdjacentHTML('beforeend', html);
@@ -753,11 +763,11 @@ const SYNONYMS_DEPRECATED: Record<string, string[]> = {
     function renderActiveTerms() {
       if (!termsEl) return;
       var items = [];
-      if (sel.q && !isQuoted(sel.q)) items.push({ label: sel.q, kind: 'q' });
+      if (sel.q) items.push({ label: sel.q, kind: 'q', countKey: sel.q.replace(/^"|"$/g, '') });
       if (relKey) relSel.forEach(function (t) { items.push({ label: t, kind: 'chip' }); });
       if (!items.length) { termsEl.innerHTML = ''; termsEl.classList.add('hidden'); termsEl.classList.remove('flex'); return; }
       termsEl.innerHTML = items.map(function (it) {
-        var c = activeCount(it.label);
+        var c = activeCount(it.countKey || it.label);
         return '<span class="sf-term">' + esc(it.label) + (c ? ' <span class="sf-term-cnt">' + c.toLocaleString('en-US') + '</span>' : '') +
           '<button type="button" class="sf-term-x" data-term="' + esc(it.label) + '" data-kind="' + it.kind + '" aria-label="remove">×</button></span>';
       }).join('');
@@ -898,7 +908,7 @@ const SYNONYMS_DEPRECATED: Record<string, string[]> = {
             if (sortDateBtn) sortDateBtn.className = sortBtnClass(!useRel);
           }
           resultsEl.classList.remove('hidden');
-          try { await renderGroup(curSingle, resultsEl, moreBtn); } catch (e) {}
+          try { await renderGroup(curSingle, resultsEl, moreBtn, token); } catch (e) {}
           if (pending !== token) return;
           if (loadEl) loadEl.classList.add('hidden');
           emptyEl.classList.toggle('hidden', stotal > 0);
@@ -942,9 +952,9 @@ const SYNONYMS_DEPRECATED: Record<string, string[]> = {
           if (sortDateBtn) sortDateBtn.className = sortBtnClass(!useRel2);
         }
 
-        if (bestCount > 0) { bestWrap.classList.remove('hidden'); try { await renderGroup(curBest, bestEl, bestMore); } catch (e) {} }
+        if (bestCount > 0) { bestWrap.classList.remove('hidden'); try { await renderGroup(curBest, bestEl, bestMore, token); } catch (e) {} }
         if (pending !== token) return;
-        if (brCount > 0) { broaderWrap.classList.remove('hidden'); try { await renderGroup(curBroader, broaderEl, broaderMore); } catch (e) {} }
+        if (brCount > 0) { broaderWrap.classList.remove('hidden'); try { await renderGroup(curBroader, broaderEl, broaderMore, token); } catch (e) {} }
         if (pending !== token) return;
 
         if (loadEl) loadEl.classList.add('hidden');
@@ -952,9 +962,11 @@ const SYNONYMS_DEPRECATED: Record<string, string[]> = {
       } catch (e) { if (loadEl) loadEl.classList.add('hidden'); }
     }
 
-    moreBtn.addEventListener('click', async function () { await renderGroup(curSingle, resultsEl, moreBtn); });
-    if (bestMore) bestMore.addEventListener('click', async function () { await renderGroup(curBest, bestEl, bestMore); });
-    if (broaderMore) broaderMore.addEventListener('click', async function () { await renderGroup(curBroader, broaderEl, broaderMore); });
+    // Load-more: capture the live search token now; if a new search supersedes this
+    // group mid-fetch (pending bumped + containers cleared), renderGroup drops the append.
+    moreBtn.addEventListener('click', async function () { var tok = pending; await renderGroup(curSingle, resultsEl, moreBtn, tok); });
+    if (bestMore) bestMore.addEventListener('click', async function () { var tok = pending; await renderGroup(curBest, bestEl, bestMore, tok); });
+    if (broaderMore) broaderMore.addEventListener('click', async function () { var tok = pending; await renderGroup(curBroader, broaderEl, broaderMore, tok); });
     // Sort toggle: Relevance (default for text queries) vs Newest (date).
     if (sortRelBtn) sortRelBtn.addEventListener('click', function () { if (sortPref !== null) { sortPref = null; run(); } });
     if (sortDateBtn) sortDateBtn.addEventListener('click', function () { if (sortPref !== 'date') { sortPref = 'date'; run(); } });

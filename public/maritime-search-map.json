@@ -145,8 +145,8 @@
       }
     },
     "bill_of_lading": {
-      "triggers": ["b/l", "bill of lading", "bills of lading"],
-      "related": ["original bill of lading", "copy bill of lading", "non negotiable bill", "clean bill of lading", "claused bill of lading", "switch bill of lading", "split bill of lading", "surrendered bill of lading", "sea waybill", "mate's receipt", "consignee", "notify party", "endorsement"],
+      "triggers": ["b/l", "bill of lading", "bills of lading", "billoflading"],
+      "related": ["bill of lading", "billoflading", "original bill of lading", "copy bill of lading", "non negotiable bill", "clean bill of lading", "claused bill of lading", "switch bill of lading", "split bill of lading", "surrendered bill of lading", "sea waybill", "mate's receipt", "mates receipt", "consignee", "notify party", "endorsement"],
       "narrow": {
         "original bill of lading": ["OBL", "non presentation of OBL", "delivery order", "cargo release"],
         "claused bill of lading": ["remarked bill of lading", "mate's receipt remarks", "cargo condition remarks"],
@@ -304,7 +304,7 @@
     },
     "draft_survey": {
       "triggers": ["draft survey", "draught survey"],
-      "related": ["cargo weight determination", "draft survey report", "shore figure discrepancy", "cargo shortage", "outturn shortage", "load port draft survey", "discharge port draft survey", "density correction", "ballast calculation", "constant correction"],
+      "related": ["draft survey", "draught survey", "cargo weight determination", "draft survey report", "shore figure discrepancy", "cargo shortage", "outturn shortage", "load port draft survey", "discharge port draft survey", "density correction", "ballast calculation", "constant correction"],
       "narrow": {
         "shore figure discrepancy": ["draft survey shortage", "shore scale", "cargo shortage", "outturn discrepancy"]
       }
@@ -421,6 +421,56 @@
         "blackout": ["power failure", "generator trip", "emergency generator", "loss of steering"],
         "emergency generator": ["SOLAS requirement", "emergency power", "emergency switchboard", "blackout recovery"]
       }
-    }
+    },
+    "spelling_hatch_cover": { "triggers": ["hatch cover", "hatchcover"], "related": ["hatch cover", "hatchcover"] },
+    "spelling_life_boat": { "triggers": ["life boat", "lifeboat"], "related": ["life boat", "lifeboat"] },
+    "spelling_life_raft": { "triggers": ["life raft", "liferaft"], "related": ["life raft", "liferaft"] },
+    "spelling_life_jacket": { "triggers": ["life jacket", "lifejacket"], "related": ["life jacket", "lifejacket"] },
+    "spelling_gangway": { "triggers": ["gang way", "gangway"], "related": ["gang way", "gangway"] },
+    "spelling_deckhouse": { "triggers": ["deck house", "deckhouse"], "related": ["deck house", "deckhouse"] },
+    "spelling_wheelhouse": { "triggers": ["wheel house", "wheelhouse"], "related": ["wheel house", "wheelhouse"] },
+    "spelling_engine_room": { "triggers": ["engine room", "engineroom"], "related": ["engine room", "engineroom"] },
+    "spelling_pump_room": { "triggers": ["pump room", "pumproom"], "related": ["pump room", "pumproom"] },
+    "spelling_forepeak": { "triggers": ["fore peak", "forepeak"], "related": ["fore peak", "forepeak"] },
+    "spelling_towline": { "triggers": ["tow line", "towline"], "related": ["tow line", "towline"] },
+    "spelling_bow_thruster": { "triggers": ["bow thruster", "bowthruster"], "related": ["bow thruster", "bowthruster"] },
+    "spelling_stern_tube": { "triggers": ["stern tube", "sterntube"], "related": ["stern tube", "sterntube"] },
+    "spelling_crankshaft": { "triggers": ["crank shaft", "crankshaft"], "related": ["crank shaft", "crankshaft"] },
+    "spelling_turbocharger": { "triggers": ["turbo charger", "turbocharger"], "related": ["turbo charger", "turbocharger"] },
+    "spelling_gearbox": { "triggers": ["gear box", "gearbox"], "related": ["gear box", "gearbox"] },
+    "spelling_heat_exchanger": { "triggers": ["heat exchanger", "heatexchanger"], "related": ["heat exchanger", "heatexchanger"] },
+    "spelling_fuel_pump": { "triggers": ["fuel pump", "fuelpump"], "related": ["fuel pump", "fuelpump"] },
+    "spelling_fuel_oil": { "triggers": ["fuel oil", "fueloil"], "related": ["fuel oil", "fueloil"] },
+    "spelling_steam_pipe": { "triggers": ["steam pipe", "steampipe"], "related": ["steam pipe", "steampipe"] },
+    "spelling_bulkhead": { "triggers": ["bulk head", "bulkhead"], "related": ["bulk head", "bulkhead"] },
+    "spelling_porthole": { "triggers": ["port hole", "porthole"], "related": ["port hole", "porthole"] },
+    "spelling_watchkeeping": { "triggers": ["watch keeping", "watchkeeping"], "related": ["watch keeping", "watchkeeping"] },
+    "spelling_lookout": { "triggers": ["look out", "lookout"], "related": ["look out", "lookout"] },
+    "spelling_sea_trial": { "triggers": ["sea trial", "seatrial"], "related": ["sea trial", "seatrial"] },
+    "spelling_standby": { "triggers": ["stand by", "standby"], "related": ["stand by", "standby"] },
+    "spelling_headway": { "triggers": ["head way", "headway"], "related": ["head way", "headway"] },
+    "spelling_underway": { "triggers": ["under way", "underway"], "related": ["under way", "underway"] },
+    "spelling_overboard": { "triggers": ["over board", "overboard"], "related": ["over board", "overboard"] },
+    "spelling_man_overboard": { "triggers": ["man overboard", "manoverboard"], "related": ["man overboard", "manoverboard"] },
+    "spelling_portside": { "triggers": ["port side", "portside"], "related": ["port side", "portside"] },
+    "spelling_starboard": { "triggers": ["star board", "starboard"], "related": ["star board", "starboard"] },
+    "spelling_breakbulk": { "triggers": ["break bulk", "breakbulk"], "related": ["break bulk", "breakbulk"] },
+    "spelling_shipyard": { "triggers": ["ship yard", "shipyard"], "related": ["ship yard", "shipyard"] },
+    "spelling_shore_leave": { "triggers": ["shore leave", "shoreleave"], "related": ["shore leave", "shoreleave"] },
+    "spelling_deadfreight": { "triggers": ["dead freight", "deadfreight"], "related": ["dead freight", "deadfreight"] },
+    "spelling_time_bar": { "triggers": ["time bar", "timebar"], "related": ["time bar", "timebar"] },
+    "spelling_load_line": { "triggers": ["load line", "loadline"], "related": ["load line", "loadline"] },
+    "spelling_freeboard": { "triggers": ["free board", "freeboard"], "related": ["free board", "freeboard"] },
+    "spelling_freefall": { "triggers": ["free fall", "freefall"], "related": ["free fall", "freefall"] },
+    "spelling_cargo_hold": { "triggers": ["cargo hold", "cargohold"], "related": ["cargo hold", "cargohold"] },
+    "spelling_tank_top": { "triggers": ["tank top", "tanktop"], "related": ["tank top", "tanktop"] },
+    "spelling_bilge_keel": { "triggers": ["bilge keel", "bilgekeel"], "related": ["bilge keel", "bilgekeel"] },
+    "spelling_turnaround": { "triggers": ["turn around", "turnaround"], "related": ["turn around", "turnaround"] },
+    "spelling_load_port": { "triggers": ["load port", "loadport"], "related": ["load port", "loadport"] },
+    "spelling_timesheet": { "triggers": ["time sheet", "timesheet"], "related": ["time sheet", "timesheet"] },
+    "spelling_charterparty": { "triggers": ["charter party", "charterparty"], "related": ["charter party", "charterparty"] },
+    "spelling_voyage_charter": { "triggers": ["voyage charter", "voyagecharter"], "related": ["voyage charter", "voyagecharter"] },
+    "variant_protest_letter": { "triggers": ["protest letter", "letter of protest"], "related": ["protest letter", "letter of protest"] },
+    "variant_mates_receipt": { "triggers": ["mate's receipt", "mates receipt", "mate receipt"], "related": ["mate's receipt", "mates receipt", "mate receipt"] }
   }
 }
