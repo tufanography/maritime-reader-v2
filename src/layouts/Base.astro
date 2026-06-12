@@ -14,6 +14,10 @@ const { title, description = 'Maritime news, decoded.' } = Astro.props;
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{title}</title>
     <meta name="description" content={description} />
+    {/* Self-referencing canonical at the apex host so Google consolidates the
+        apex / www / v2 duplicates onto one URL (fixes GSC "Duplicate without
+        user-selected canonical", 2026-06-12). Astro.site = the config `site`. */}
+    <link rel="canonical" href={new URL(Astro.url.pathname, Astro.site).href} />
     <style>
       :root {
         --bg:#0b1020; --fg:#e7ecf3; --muted:#8a96a8;

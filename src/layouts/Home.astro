@@ -23,6 +23,9 @@ const showHeaderSearch = !(path === '/' || path.startsWith('/page/'));
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{title}</title>
     <meta name="description" content={description} />
+    {/* Self-referencing canonical at the apex host (see Base.astro) — fixes GSC
+        "Duplicate without user-selected canonical" across apex/www/v2. */}
+    <link rel="canonical" href={new URL(path, Astro.site).href} />
   </head>
   <body class="min-h-screen bg-slate-50 text-slate-900 antialiased">
     {/* Global search — present on EVERY Home-layout page (homepage + article

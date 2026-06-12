@@ -20,7 +20,7 @@ function xmlEscape(s: string): string {
 }
 
 export const GET: APIRoute = async ({ site }) => {
-  const base = (site?.toString() ?? 'https://v2.maritimereader.com').replace(/\/$/, '');
+  const base = (site?.toString() ?? 'https://maritimereader.com').replace(/\/$/, '');
   const articles = await articleRepo.listVisible(ARTICLE_PAGE_LIMIT);
   const total = await articleRepo.countVisible();
   const navPages = Math.min(MAX_PAGES, Math.max(1, Math.ceil(total / PAGE_SIZE)));

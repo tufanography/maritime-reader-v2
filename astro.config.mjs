@@ -10,7 +10,7 @@ import tailwindcss from '@tailwindcss/vite';
 // Frontend port slice 1 (2026-05-31) added this.
 export default defineConfig({
   output: 'static',
-  site: 'https://v2.maritimereader.com',
+  site: 'https://maritimereader.com',
   vite: {
     plugins: [tailwindcss()],
   },
