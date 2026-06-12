@@ -1191,6 +1191,10 @@ const SYNONYMS_DEPRECATED: Record<string, string[]> = {
     display: flex; align-items: center; justify-content: center; gap: 0.6rem;
     margin: 0 0 18px; user-select: none;
   }
+  /* The id-selector display:flex above OUTWEIGHS the .hidden utility (id > class),
+     so showSortToggle()'s `hidden` class could not hide the toggle — it stayed
+     visible on facet-only/browse views (user 2026-06-12). This id+class rule wins. */
+  #sf-sort.hidden { display: none; }
   .sf-sort-lbl {
     font-size: 0.78rem; font-weight: 400; color: #94a3b8;   /* slate-400 muted */
     cursor: pointer; white-space: nowrap;
