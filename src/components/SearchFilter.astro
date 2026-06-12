@@ -281,11 +281,18 @@ const SYNONYMS_DEPRECATED: Record<string, string[]> = {
     <div class="sf-sonar" aria-hidden="true"><span></span><span></span><span></span></div>
     <p class="text-xl font-semibold text-slate-600 tracking-tight mt-5">Searching the archive…</p>
   </div>
-  {/* Sort toggle — shown only for a plain text query (where relevance is a choice) */}
-  <div id="sf-sort" class="hidden mb-4 flex items-center gap-2 text-xs">
-    <span class="text-slate-500 font-semibold uppercase tracking-wide">Sort</span>
-    <button id="sf-sort-rel" type="button" class="sf-sort-btn on">Relevance</button>
-    <button id="sf-sort-date" type="button" class="sf-sort-btn">Newest</button>
+  {/* GLOBAL sort toggle — a single sliding switch that drives the order of the
+      WHOLE result set (Best + Broader + the single/ungrouped list). Left = relevance
+      (sortPref=null), right = newest (sortPref='date'). It is ONE element that run()
+      relocates per render: directly below the "Best matches" heading for grouped
+      queries, or at the top of #sf-results for single/ungrouped queries. Hidden when
+      there are no results. Clicking the track OR either label toggles. */}
+  <div id="sf-sort" class="hidden">
+    <span id="sf-sort-rel" class="sf-sort-lbl">Most relevant first</span>
+    <button id="sf-sort-track" type="button" role="switch" aria-checked="false" aria-label="Sort order">
+      <span class="sf-sort-thumb"></span>
+    </button>
+    <span id="sf-sort-date" class="sf-sort-lbl">Newest first</span>
   </div>
   {/* Grouped results: Best matches (exact phrase / topic) then Broader matches (words appear separately) */}
   <div id="sf-best-wrap" class="hidden">
@@ -364,8 +371,9 @@ const SYNONYMS_DEPRECATED: Record<string, string[]> = {
     var relatedTitle = document.getElementById('sf-related-title');
     var relatedList = document.getElementById('sf-related-list');
     var sortWrap = document.getElementById('sf-sort');
-    var sortRelBtn = document.getElementById('sf-sort-rel');
-    var sortDateBtn = document.getElementById('sf-sort-date');
+    var sortRelLbl = document.getElementById('sf-sort-rel');
+    var sortDateLbl = document.getElementById('sf-sort-date');
+    var sortTrack = document.getElementById('sf-sort-track');
     var bestWrap = document.getElementById('sf-best-wrap');
     var bestEl = document.getElementById('sf-best');
     var bestMore = document.getElementById('sf-best-more');
@@ -549,8 +557,31 @@ const SYNONYMS_DEPRECATED: Record<string, string[]> = {
     // fast 70ms transition, hover-lift, pressed-when-active). Kept out of Tailwind
     // utility strings so the JS-built buttons get full, instant styling.
     function chipClass(on) { return 'sf-chip' + (on ? ' on' : ''); }
-    function sortBtnClass(on) { return 'sf-sort-btn' + (on ? ' on' : ''); }
     var chipEls = {}; // facet -> [{value, btn}]
+
+    // GLOBAL sort toggle helpers. State mirrors sortPref: null = relevance (thumb
+    // LEFT), 'date' = newest (thumb RIGHT). syncSortToggle() reflects the visual
+    // state; showSortToggle(container, on) moves the single toggle element into the
+    // right container (prepended) and shows/hides it.
+    function syncSortToggle() {
+      if (!sortWrap) return;
+      var dateOn = sortPref === 'date';
+      sortWrap.classList.toggle('is-date', dateOn);
+      if (sortTrack) sortTrack.setAttribute('aria-checked', dateOn ? 'true' : 'false');
+      if (sortRelLbl) sortRelLbl.classList.toggle('on', !dateOn);
+      if (sortDateLbl) sortDateLbl.classList.toggle('on', dateOn);
+    }
+    // Move the single toggle element so it sits immediately BEFORE `beforeEl`
+    // (e.g. just above the ungrouped grid, or just below the Best heading).
+    function showSortToggle(beforeEl, on) {
+      if (!sortWrap) return;
+      if (!on) { sortWrap.classList.add('hidden'); return; }
+      if (beforeEl && beforeEl.parentNode && sortWrap.nextSibling !== beforeEl) {
+        beforeEl.parentNode.insertBefore(sortWrap, beforeEl);
+      }
+      sortWrap.classList.remove('hidden');
+      syncSortToggle();
+    }
 
     // Build the facet UI ONCE (init only). pf.filters() is ~2.4s on 51k — never
     // call it per-keystroke.
@@ -834,7 +865,7 @@ const SYNONYMS_DEPRECATED: Record<string, string[]> = {
       }
       if (!active) {
         clearResults(); curSingle = curBest = curBroader = null; relKey = null; relSel = new Set();
-        renderRelatedPanel(null); if (sortWrap) sortWrap.classList.add('hidden'); if (loadEl) loadEl.classList.add('hidden');
+        renderRelatedPanel(null); showSortToggle(null, false); if (loadEl) loadEl.classList.add('hidden');
         return;
       }
 
@@ -897,9 +928,11 @@ const SYNONYMS_DEPRECATED: Record<string, string[]> = {
         // ===== QUOTED phrase, BROWSE, or SINGLE-WORD → one ungrouped list (no headings) =====
         if (quoted || !multiWord) {
           var single = quoted ? [raw] : singleTerms;
-          var singleMulti = single.length > 1;
-          var loneWord = !!raw && !quoted && !multiWord && !singleMulti; // e.g. "anchor": one term, relevance is a choice
-          var useRel = loneWord && sortPref !== 'date';
+          // relevance is a meaningful choice when there's ONE search stream (a lone
+          // word OR a quoted phrase) — multiple merged streams have no comparable
+          // relevance order, so those stay date-merged.
+          var singleStream = single.length <= 1;
+          var useRel = singleStream && sortPref !== 'date';
           var sOpts = { filters: filt }; if (!useRel) sOpts.sort = { date: 'desc' };
           var sterms = single.length ? single : [null];
           var sres = await Promise.all(sterms.map(function (t) { return pf.search(t, sOpts); }));
@@ -911,11 +944,13 @@ const SYNONYMS_DEPRECATED: Record<string, string[]> = {
           var ids = {}; sres.forEach(function (s) { for (var i = 0; i < s.results.length; i++) ids[s.results[i].id] = 1; });
           var stotal = Object.keys(ids).length;
           countEl.textContent = stotal.toLocaleString('en-US') + ' result' + (stotal === 1 ? '' : 's');
-          if (sortWrap) {
-            sortWrap.classList.toggle('hidden', !loneWord || stotal === 0);
-            if (sortRelBtn) sortRelBtn.className = sortBtnClass(useRel);
-            if (sortDateBtn) sortDateBtn.className = sortBtnClass(!useRel);
-          }
+          // GLOBAL toggle at the TOP of the ungrouped list (no "Best matches" heading
+          // here) — placed just above the grid. Shown ONLY when the list is a SINGLE
+          // stream (lone word / quoted phrase), where relevance is a real, different
+          // order. A single word that expands to a topic (multiple merged chip streams)
+          // is date-merged with no comparable relevance, so the toggle would be inert →
+          // hide it there to avoid a control that does nothing (user 2026-06-12).
+          showSortToggle(resultsEl, singleStream && stotal > 0);
           resultsEl.classList.remove('hidden');
           try { await renderGroup(curSingle, resultsEl, moreBtn, token); } catch (e) {}
           if (pending !== token) return;
@@ -927,7 +962,10 @@ const SYNONYMS_DEPRECATED: Record<string, string[]> = {
         // ===== GROUPED: Best (exact phrase FIRST, then chips) + Broader (broad − Best) =====
         var rawPhrase = (multiWord && !quoted) ? '"' + raw + '"' : null;          // the user's typed phrase
         var secondary = strong.filter(function (t) { return t !== rawPhrase; });  // seed + chip phrases
-        var bOpts = { filters: filt, sort: { date: 'desc' } };
+        // Best now HONORS the global toggle: newest → force date sort; relevance →
+        // let Pagefind relevance order apply (no sort key) and merge by relevance.
+        var bestByDate = sortPref === 'date';
+        var bOpts = { filters: filt }; if (bestByDate) bOpts.sort = { date: 'desc' };
         var bestIds = {};
         function toStream(s) { for (var i = 0; i < s.results.length; i++) bestIds[s.results[i].id] = 1; return { results: s.results, idx: 0 }; }
         var bestTiers = [];
@@ -945,7 +983,7 @@ const SYNONYMS_DEPRECATED: Record<string, string[]> = {
         brSearches.forEach(function (s, i) { addActive(bterms[i], s.results); });
         updateChipCounts(); renderActiveTerms();
 
-        curBest = { tiers: bestTiers, byDate: true, seen: {} };
+        curBest = { tiers: bestTiers, byDate: bestByDate, seen: {} };
         curBroader = { tiers: [ brSearches.map(function (s) { return { results: s.results, idx: 0 }; }) ], byDate: brByDate, seen: {}, excludeIds: bestIds };
         curSingle = null;
 
@@ -955,11 +993,13 @@ const SYNONYMS_DEPRECATED: Record<string, string[]> = {
         var total = bestCount + brCount;
         countEl.textContent = total.toLocaleString('en-US') + ' result' + (total === 1 ? '' : 's');
 
-        if (sortWrap) {  // toggle controls the Broader group's order
-          sortWrap.classList.toggle('hidden', brCount === 0);
-          if (sortRelBtn) sortRelBtn.className = sortBtnClass(useRel2);
-          if (sortDateBtn) sortDateBtn.className = sortBtnClass(!useRel2);
-        }
+        // GLOBAL toggle, placed directly below the "Best matches" heading (just above
+        // the Best grid) when Best has results; otherwise above the Broader grid (so
+        // it is never trapped inside the hidden #sf-best-wrap). Shown ONLY when Broader
+        // has results — Broader is the genuinely re-orderable group; when there is only
+        // Best (merged phrase tiers, relevance order is flat) the toggle would be inert,
+        // so hide it (user 2026-06-12).
+        showSortToggle(bestCount > 0 ? bestEl : broaderEl, brCount > 0);
 
         if (bestCount > 0) { bestWrap.classList.remove('hidden'); try { await renderGroup(curBest, bestEl, bestMore, token); } catch (e) {} }
         if (pending !== token) return;
@@ -976,9 +1016,12 @@ const SYNONYMS_DEPRECATED: Record<string, string[]> = {
     moreBtn.addEventListener('click', async function () { var tok = pending; await renderGroup(curSingle, resultsEl, moreBtn, tok); });
     if (bestMore) bestMore.addEventListener('click', async function () { var tok = pending; await renderGroup(curBest, bestEl, bestMore, tok); });
     if (broaderMore) broaderMore.addEventListener('click', async function () { var tok = pending; await renderGroup(curBroader, broaderEl, broaderMore, tok); });
-    // Sort toggle: Relevance (default for text queries) vs Newest (date).
-    if (sortRelBtn) sortRelBtn.addEventListener('click', function () { if (sortPref !== null) { sortPref = null; run(); } });
-    if (sortDateBtn) sortDateBtn.addEventListener('click', function () { if (sortPref !== 'date') { sortPref = 'date'; run(); } });
+    // GLOBAL sort toggle: clicking the track flips; clicking a label selects that
+    // side. Drives sortPref for the WHOLE result set (Best + Broader + single list).
+    function setSort(pref) { if (sortPref !== pref) { sortPref = pref; syncSortToggle(); run(); } }
+    if (sortTrack) sortTrack.addEventListener('click', function () { setSort(sortPref === 'date' ? null : 'date'); });
+    if (sortRelLbl) sortRelLbl.addEventListener('click', function () { setSort(null); });
+    if (sortDateLbl) sortDateLbl.addEventListener('click', function () { setSort('date'); });
     clearBtn.addEventListener('click', function () {
       sel.q = ''; qEl.value = ''; ALL_FACETS.forEach(function (k) { sel[k] = new Set(); }); syncQClear(); run();
     });
@@ -1128,15 +1171,34 @@ const SYNONYMS_DEPRECATED: Record<string, string[]> = {
   .sf-chip.on:hover { transform: translateY(0); box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.35); border-color: #0f172a; }
   .sf-chip .cnt { opacity: 0.6; font-weight: 500; }
 
-  /* Sort toggle (Relevance / Newest) — small segmented pills. */
-  .sf-sort-btn {
-    padding: 0.2rem 0.7rem; border-radius: 9999px;
-    border: 1px solid #cbd5e1; background: #fff; color: #475569;
-    font-size: 0.72rem; font-weight: 600; cursor: pointer;
-    transition: background-color 70ms ease, color 70ms ease, border-color 70ms ease;
+  /* GLOBAL sort toggle — a sliding switch (Most relevant first ⟷ Newest first).
+     Labels sit OUTSIDE the 44×24 track so the 18×18 thumb never overlaps them.
+     Active label is green; inactive is muted slate. The thumb slides via a left
+     transition driven by the .is-date state class on #sf-sort. */
+  #sf-sort {
+    display: flex; align-items: center; justify-content: center; gap: 0.6rem;
+    margin: 0 0 18px; user-select: none;
   }
-  .sf-sort-btn:hover { border-color: #94a3b8; }
-  .sf-sort-btn.on { background: #0f172a; color: #fff; border-color: #0f172a; }
+  .sf-sort-lbl {
+    font-size: 0.78rem; font-weight: 400; color: #94a3b8;   /* slate-400 muted */
+    cursor: pointer; white-space: nowrap;
+    transition: color 120ms ease, font-weight 120ms ease;
+  }
+  .sf-sort-lbl.on { color: #1d9e75; font-weight: 500; }      /* active = green */
+  #sf-sort-track {
+    position: relative; flex: none;
+    width: 44px; height: 24px; border-radius: 12px;
+    border: 1px solid #cbd5e1; background: #e2e8f0;          /* slate-200 track */
+    cursor: pointer; padding: 0; transition: background-color 120ms ease;
+  }
+  .sf-sort-thumb {
+    position: absolute; top: 50%; left: 3px;
+    width: 18px; height: 18px; border-radius: 9999px;
+    background: #378add; transform: translateY(-50%);
+    transition: left 140ms cubic-bezier(0.4, 0, 0.2, 1);
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.25);
+  }
+  #sf-sort.is-date .sf-sort-thumb { left: 23px; }            /* 44 − 18 − 3 = 23 */
 
   /* Group section headers (BEST MATCHES / BROADER MATCHES) — centered, dark red */
   .sf-group-label {
