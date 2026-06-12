@@ -983,7 +983,16 @@ const SYNONYMS_DEPRECATED: Record<string, string[]> = {
         brSearches.forEach(function (s, i) { addActive(bterms[i], s.results); });
         updateChipCounts(); renderActiveTerms();
 
-        curBest = { tiers: bestTiers, byDate: bestByDate, seen: {} };
+        // Newest ("date") mode: COLLAPSE the Best tiers into ONE flat tier so the
+        // date k-way merge runs across exact-phrase + chip results together — otherwise
+        // tiers drain in order and the (possibly old) exact-phrase match stays pinned on
+        // top even though the user asked for newest-first (the "grain cargo" → 8-month-old
+        // BIMCO Grain Code on top bug, user 2026-06-12). Relevance mode keeps the tiered
+        // order (exact phrase first, then chips).
+        var bestTierList = bestByDate
+          ? [bestTiers.reduce(function (acc, t) { return acc.concat(t); }, [])]
+          : bestTiers;
+        curBest = { tiers: bestTierList, byDate: bestByDate, seen: {} };
         curBroader = { tiers: [ brSearches.map(function (s) { return { results: s.results, idx: 0 }; }) ], byDate: brByDate, seen: {}, excludeIds: bestIds };
         curSingle = null;
 
