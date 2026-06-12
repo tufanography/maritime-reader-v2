@@ -928,10 +928,13 @@ const SYNONYMS_DEPRECATED: Record<string, string[]> = {
         // ===== QUOTED phrase, BROWSE, or SINGLE-WORD → one ungrouped list (no headings) =====
         if (quoted || !multiWord) {
           var single = quoted ? [raw] : singleTerms;
-          // relevance is a meaningful choice when there's ONE search stream (a lone
-          // word OR a quoted phrase) — multiple merged streams have no comparable
-          // relevance order, so those stay date-merged.
-          var singleStream = single.length <= 1;
+          // relevance is a meaningful choice ONLY when there's EXACTLY ONE search
+          // stream (a lone word OR a quoted phrase). length===0 = pure facet/browse
+          // (source/type/segment/theme selected with no text query) → relevance is
+          // meaningless (no query term to rank by) → date-only, no toggle (user
+          // 2026-06-12). length>1 = a topic's merged chip streams → no comparable
+          // relevance order → also date-merged.
+          var singleStream = single.length === 1;
           var useRel = singleStream && sortPref !== 'date';
           var sOpts = { filters: filt }; if (!useRel) sOpts.sort = { date: 'desc' };
           var sterms = single.length ? single : [null];
