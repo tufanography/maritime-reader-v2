@@ -1,7 +1,7 @@
 # DELTA + FEED deploy — every 2 hours, at :37 past the hour.
 # Keeps the homepage feed AND search ~3h-fresh without re-reading all 51k rows
-# from Supabase Nano: a light build (ARTICLE_PAGE_LIMIT=1500 ≈ last ~2 weeks,
-# ~2.7s / 2.6MB DB read — measured 2026-06-08) produces the feed + recent article
+# from Supabase Nano: a light build (ARTICLE_PAGE_LIMIT=2100 — enough to fill all
+# 100 navigable pages; still a light DB read) produces the feed + recent article
 # detail pages + a small `_pagefind-delta` index. The client merges that delta on
 # top of the static base index (`pf.mergeIndex('/_pagefind-delta', {baseUrl:'/'})`).
 # Upload is INCREMENTAL (only changed files, manifest in R2) so it's ~free.
@@ -30,7 +30,12 @@ jobs:
       - name: Build feed + recent article pages (light DB read)
         run: npm run build:feed
         env:
-          ARTICLE_PAGE_LIMIT: '1500'
+          # 2100 (not 1500) so the light build fills ALL 100 navigable pages
+          # (MAX_PAGES 100 × PAGE_SIZE 20 = 2000 articles needed). Below this,
+          # deep pages (76-100) render empty since deploy-base (full 52k) keeps
+          # timing out on Nano. 2100 rows is still a light read. Deep archive
+          # beyond 2000 stays reachable via search (the full base _pagefind).
+          ARTICLE_PAGE_LIMIT: '2100'
           PUBLIC_SUPABASE_URL: ${{ secrets.PUBLIC_SUPABASE_URL }}
           PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.PUBLIC_SUPABASE_ANON_KEY }}
       - name: Build delta search index
