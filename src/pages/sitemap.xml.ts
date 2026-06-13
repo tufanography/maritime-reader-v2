@@ -22,8 +22,10 @@ function xmlEscape(s: string): string {
 export const GET: APIRoute = async ({ site }) => {
   const base = (site?.toString() ?? 'https://maritimereader.com').replace(/\/$/, '');
   const articles = await articleRepo.listVisible(ARTICLE_PAGE_LIMIT);
-  const total = await articleRepo.countVisible();
-  const navPages = Math.min(MAX_PAGES, Math.max(1, Math.ceil(total / PAGE_SIZE)));
+  // Use the ACTUALLY-loaded article count (articles.length), NOT the full
+  // archive count — otherwise the sitemap lists /page/N routes that a light
+  // build never generated (they'd 404). Matches index.astro / [n].astro.
+  const navPages = Math.min(MAX_PAGES, Math.max(1, Math.ceil(articles.length / PAGE_SIZE)));
 
   const urls: string[] = [];
   // Homepage (page 1)

@@ -76,5 +76,28 @@ const fmt = (n: number) => n.toLocaleString('en-US');
     ) : (
       <span class="px-3 py-1.5 rounded-md border border-slate-200 text-sm text-slate-400 cursor-not-allowed">Next →</span>
     )}
+    {totalPages > 7 && (
+      <form class="flex items-center gap-1 ml-1" data-goto>
+        <input
+          type="number" min="1" max={totalPages} inputmode="numeric"
+          placeholder="Page #" aria-label={`Go to page (1–${totalPages})`}
+          class="w-20 px-2 py-1.5 rounded-md border border-slate-300 text-sm text-center focus:outline-none focus:border-sky-400"
+        />
+        <button type="submit" class="px-2.5 py-1.5 rounded-md border border-slate-300 text-sm font-medium hover:bg-slate-50">Go</button>
+      </form>
+    )}
   </div>
 </nav>
+<script is:inline define:vars={{ totalPages }}>
+  // "Go to page": type a number + Enter (or click Go) → jump. Page 1 lives at
+  // "/", pages N>1 at "/page/N/". Out-of-range is clamped to [1, totalPages].
+  document.querySelectorAll('form[data-goto]').forEach(function (f) {
+    f.addEventListener('submit', function (e) {
+      e.preventDefault();
+      var n = parseInt(f.querySelector('input').value, 10);
+      if (!Number.isFinite(n) || n < 1) return;
+      if (n > totalPages) n = totalPages;
+      window.location.href = n === 1 ? '/' : '/page/' + n + '/';
+    });
+  });
+</script>

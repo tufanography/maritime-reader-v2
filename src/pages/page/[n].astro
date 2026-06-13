@@ -25,7 +25,11 @@ export async function getStaticPaths() {
   const PAGE_SIZE = 20;
   const MAX_PAGES = 100;
   const total = await articleRepo.countVisible();
-  const totalPages = Math.min(MAX_PAGES, Math.max(1, Math.ceil(total / PAGE_SIZE)));
+  // Generate routes only for pages the loaded slice can actually fill — a light
+  // build (delta, ARTICLE_PAGE_LIMIT 1500) otherwise emits /page/76..100 that
+  // render empty. `total` (full archive) still drives the caption.
+  const loaded = await articleRepo.loadedCount();
+  const totalPages = Math.min(MAX_PAGES, Math.max(1, Math.ceil(loaded / PAGE_SIZE)));
   // Page 1 lives at "/", so enumerate 2..totalPages only.
   const paths = [];
   for (let n = 2; n <= totalPages; n++) {

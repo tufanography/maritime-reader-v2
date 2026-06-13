@@ -186,6 +186,15 @@ export class SupabaseArticleRepository implements ArticleRepository {
     return all.slice(offset, offset + limit);
   }
 
+  // How many articles are ACTUALLY loaded into this build (capped by
+  // ARTICLE_PAGE_LIMIT). Pagination route generation must use THIS, not the
+  // full countVisible() — otherwise a light build (delta, limit 1500) emits
+  // page routes for the whole archive and pages past the loaded slice render
+  // empty ("no article"). Memoized read, so no extra DB cost.
+  async loadedCount(): Promise<number> {
+    return (await this.listVisible(ARTICLE_PAGE_LIMIT)).length;
+  }
+
   async countVisible(): Promise<number> {
     // Cheap PLANNER-ESTIMATE count (head:true → no rows/egress). MEASURED
     // 2026-06-08: count:'exact' over the visible filter returns null / hits

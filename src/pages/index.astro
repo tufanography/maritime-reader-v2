@@ -18,10 +18,14 @@ const PAGE_SIZE = 20;
 // is steered to the right tool for old content. The count badge still
 // shows the REAL total (49.5k); only the page window is capped.
 const MAX_PAGES = 100;
-const [articles, total] = await Promise.all([
+const [articles, total, loaded] = await Promise.all([
   articleRepo.listVisiblePage(0, PAGE_SIZE),
   articleRepo.countVisible(),
+  articleRepo.loadedCount(),
 ]);
-const totalPages = Math.min(MAX_PAGES, Math.max(1, Math.ceil(total / PAGE_SIZE)));
+// Navigable pages track the ACTUALLY-loaded article count (not the full
+// archive `total`) so a light build never emits empty page routes. `total`
+// still drives the "of 50,000" caption.
+const totalPages = Math.min(MAX_PAGES, Math.max(1, Math.ceil(loaded / PAGE_SIZE)));
 ---
 <ArticleFeed articles={articles} page={1} totalPages={totalPages} total={total} />
