@@ -430,7 +430,22 @@ const SYNONYMS_DEPRECATED: Record<string, string[]> = {
     var RELATED = {};          // normRelatedTerm -> {topic, term}
     var NARROW = {};           // normNarrowKey -> {topic, key}
     function isQuoted(q) { return /^".*"$/.test(q); }
-    function norm(q) { return (q || '').toLowerCase().replace(/\s+/g, ' ').trim(); }
+    // Fold Turkish-keyboard letters to their ASCII English equivalents so a TR user
+    // typing an English term still matches. MEASURED 2026-06-12: Pagefind already
+    // case-folds + handles dotted "İ" (İncident == incident), but the dotless "ı"
+    // did NOT match (ıncident=1 vs incident=2830). Folding all TR letters fixes ı and
+    // is a no-op where Pagefind already folds. Applied to the SEARCH query only — the
+    // box / pills still show exactly what the user typed.
+    function foldTr(q) {
+      return (q || '')
+        .replace(/İ/g, 'i').replace(/ı/g, 'i')
+        .replace(/Ş/g, 's').replace(/ş/g, 's')
+        .replace(/Ğ/g, 'g').replace(/ğ/g, 'g')
+        .replace(/Ü/g, 'u').replace(/ü/g, 'u')
+        .replace(/Ö/g, 'o').replace(/ö/g, 'o')
+        .replace(/Ç/g, 'c').replace(/ç/g, 'c');
+    }
+    function norm(q) { return foldTr(q || '').toLowerCase().replace(/\s+/g, ' ').trim(); }
     function buildMapIndex(data) {
       MAP = (data && data.topics) || {};
       BLOCKED = {};
@@ -796,7 +811,7 @@ const SYNONYMS_DEPRECATED: Record<string, string[]> = {
       var items = [];
       var seenLbl = {};
       function normLbl(s) { return s.replace(/^"|"$/g, '').trim().toLowerCase(); }
-      if (sel.q) { items.push({ label: sel.q, kind: 'q', countKey: sel.q.replace(/^"|"$/g, '') }); seenLbl[normLbl(sel.q)] = true; }
+      if (sel.q) { items.push({ label: sel.q, kind: 'q', countKey: foldTr(sel.q.replace(/^"|"$/g, '')) }); seenLbl[normLbl(sel.q)] = true; }
       if (relKey) relSel.forEach(function (t) { if (seenLbl[normLbl(t)]) return; seenLbl[normLbl(t)] = true; items.push({ label: t, kind: 'chip' }); });
       if (!items.length) { termsEl.innerHTML = ''; termsEl.classList.add('hidden'); termsEl.classList.remove('flex'); return; }
       termsEl.innerHTML = items.map(function (it) {
@@ -889,7 +904,7 @@ const SYNONYMS_DEPRECATED: Record<string, string[]> = {
         if (rel && relatedPanel) relatedPanel.classList.remove('hidden'); // auto-open on a new match
       }
       // ---- Term sets: strong = multi-word phrases (Best); broad = words/AND (Broader base) ----
-      var raw = sel.q;
+      var raw = foldTr(sel.q);   // search-side query: TR letters → ASCII (display keeps sel.q)
       var quoted = isQuoted(raw);
       var multiWord = !!raw && /\s/.test(raw.trim());
       function isPhrase(t) { return /\s/.test(t); }
