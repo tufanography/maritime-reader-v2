@@ -13,6 +13,7 @@
 // - "Read →" link bottom-right
 
 import type { Article } from '@/lib/repository/types';
+import { THEMES, SEGMENTS, THEME_LABEL, SEGMENT_LABEL, type Theme, type Segment } from '@/lib/taxonomy';
 
 interface Props { article: Article }
 const { article: a } = Astro.props;
@@ -38,6 +39,19 @@ function formatAgo(iso: string | null): string {
 
 const ago = formatAgo(a.publishedAt);
 const detailHref = `/article/${a.id}/`;
+
+// Topic tags under the card: the article's themes + segments → readable labels,
+// linked to their filter pages (mirrors the detail page's "Topics & segments").
+// Only known taxonomy values; show up to 5, the rest collapse into "+N more".
+const themeSet = new Set<string>(THEMES);
+const segSet = new Set<string>(SEGMENTS);
+const cardTags = [
+  ...a.themes.filter((t) => themeSet.has(t)).map((t) => ({ label: THEME_LABEL[t as Theme], href: `/theme/${t}/` })),
+  ...a.segments.filter((s) => segSet.has(s)).map((s) => ({ label: SEGMENT_LABEL[s as Segment], href: `/segment/${s}/` })),
+];
+const MAX_TAGS = 5;
+const shownTags = cardTags.slice(0, MAX_TAGS);
+const moreTags = cardTags.length - shownTags.length;
 // v2 is a STATIC site and has no `/r/<id>` redirector — that route is v1's
 // SSR click-tracker (app/r/[id]), which was never ported, so linking the
 // card image/title to `/r/<id>/` 404'd every click (found 2026-06-05). The
@@ -136,6 +150,17 @@ const gradientStyle = !a.imageUrl
         {a.title}
       </a>
     </h3>
+
+    {cardTags.length > 0 && (
+      <div class="flex flex-wrap gap-1 mb-1">
+        {shownTags.map((t) => (
+          <a href={t.href} class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-100 text-slate-600 hover:bg-sky-50 hover:text-sky-700 transition">{t.label}</a>
+        ))}
+        {moreTags > 0 && (
+          <a href={detailHref} class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium text-slate-400 hover:text-slate-600">+{moreTags} more</a>
+        )}
+      </div>
+    )}
 
     <div class="mt-auto pt-3 border-t border-slate-100 flex items-center justify-end text-xs text-slate-500">
       <a href={detailHref} class="hover:text-sky-600">Read →</a>
