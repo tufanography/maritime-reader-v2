@@ -442,7 +442,7 @@ const SYNONYMS_DEPRECATED: Record<string, string[]> = {
     function activeCount(label) { for (var i = 0; i < ACTIVE.length; i++) if (ACTIVE[i].label === label) return Object.keys(ACTIVE[i].ids).length; return 0; }
     var relKey = null;       // identity (title) of the currently matched panel, or null
     var relSel = new Set();  // related/narrow terms the user has SELECTED to include
-    var sortPref = null;     // null = auto (relevance for text queries); 'date' = user chose Newest
+    var sortPref = 'date';   // DEFAULT = Newest first (user 2026-06-15). null = relevance (user clicks "Most relevant first")
 
     // 3-layer maritime search map (Phase A 2026-06-10): loaded at runtime from a
     // static JSON (/maritime-search-map.json) — NOT inlined into the HTML. Matching:
@@ -1087,7 +1087,7 @@ const SYNONYMS_DEPRECATED: Record<string, string[]> = {
     });
     qEl.addEventListener('input', function () {
       sel.q = qEl.value.trim();
-      sortPref = null; // a new/edited query defaults back to Relevance
+      sortPref = 'date'; // a new/edited query defaults back to Newest first (user 2026-06-15)
       syncQClear();
       clearTimeout(debounce);
       // Short queries match a huge slice of the 51k index — heavy + useless, and
