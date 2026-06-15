@@ -101,16 +101,17 @@ function walk(dir, out = []) {
 const keyOf = (fp) => path.relative(SRC, fp).split(path.sep).join('/');
 
 // DELTA mode (the every-2h job): upload everything EXCEPT (a) the base index
-// `_pagefind/` — untouched between weekly base rebuilds — and (b) `sitemap.xml`.
-// A delta build uses a LOW ARTICLE_PAGE_LIMIT (2100), so its sitemap.xml lists
-// only ~2100 of the ~51k articles; uploading it would OVERWRITE the full sitemap
-// that deploy-base produced, hiding ~49k articles from crawlers (this caused the
-// GSC "Discovered – not indexed" pileup, 2026-06-15). So delta leaves sitemap.xml
-// alone — the full one from the last deploy-base persists on R2. Delta still
-// uploads the feed (index/page/_astro), recent article/** pages, and
-// `_pagefind-delta/`.
+// `_pagefind/` — untouched between weekly base rebuilds — and (b) the sitemap
+// files: `sitemap.xml` (the index) + `sitemaps/**` (the per-year + pages
+// children). A delta build uses a LOW ARTICLE_PAGE_LIMIT (2100), so it emits a
+// PARTIAL sitemap set (only the newest year, ~2100 URLs); uploading those would
+// OVERWRITE the full sitemap index + children that deploy-base produced, hiding
+// ~49k articles from crawlers (this caused the GSC "Discovered – not indexed"
+// pileup, 2026-06-15). So delta leaves all sitemap files alone — the full ones
+// from the last deploy-base persist on R2. Delta still uploads the feed
+// (index/page/_astro), recent article/** pages, and `_pagefind-delta/`.
 function inScope(key) {
-  if (MODE === 'delta') return !key.startsWith('_pagefind/') && key !== 'sitemap.xml';
+  if (MODE === 'delta') return !key.startsWith('_pagefind/') && key !== 'sitemap.xml' && !key.startsWith('sitemaps/');
   return true; // full
 }
 // upload referenced-before-referrer: css → html → fragments → index/entry (last),
