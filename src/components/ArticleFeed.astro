@@ -70,6 +70,18 @@ const endIndex = offset + articles.length;
           )}
         </header>
 
+        {totalPages > 1 && (
+          <Pagination
+            page={page}
+            totalPages={totalPages}
+            startIndex={startIndex}
+            endIndex={endIndex}
+            total={total}
+            hrefForPage={hrefForPage}
+            marginClass="mb-4"
+          />
+        )}
+
         {articles.length === 0 ? (
           <div class="p-12 text-center rounded-lg border border-dashed border-slate-300">
             <p class="text-sm text-slate-600">No visible articles match this page.</p>

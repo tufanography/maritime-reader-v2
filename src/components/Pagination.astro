@@ -14,8 +14,12 @@ interface Props {
   endIndex: number;
   total: number;
   hrefForPage: (p: number) => string;
+  /** Margin utility for the nav wrapper. Defaults to `mt-6` (the bottom
+   *  bar, spaced from the grid above). The top instance passes `mb-4` so
+   *  it sits under the header with space before the grid. */
+  marginClass?: string;
 }
-const { page, totalPages, startIndex, endIndex, total, hrefForPage } = Astro.props;
+const { page, totalPages, startIndex, endIndex, total, hrefForPage, marginClass = 'mt-6' } = Astro.props;
 
 // Compact list with `…` gaps. For totals ≤ 7 we show every page; for
 // larger totals we show 1, ..., neighbours of current, ..., last.
@@ -40,7 +44,7 @@ const pages = pageWindow(page, totalPages);
 // the en-US pin already used for the header "Page X of Y" in index.astro.
 const fmt = (n: number) => n.toLocaleString('en-US');
 ---
-<nav aria-label="Pagination" class="mt-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+<nav aria-label="Pagination" class={`${marginClass} flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3`}>
   <span class="text-xs text-slate-500">
     Showing {fmt(startIndex)}–{fmt(endIndex)} of {fmt(total)}
   </span>
@@ -92,6 +96,10 @@ const fmt = (n: number) => n.toLocaleString('en-US');
   // "Go to page": type a number + Enter (or click Go) → jump. Page 1 lives at
   // "/", pages N>1 at "/page/N/". Out-of-range is clamped to [1, totalPages].
   document.querySelectorAll('form[data-goto]').forEach(function (f) {
+    // Pagination renders twice (top + bottom) → this is:inline script is
+    // emitted twice. Guard so each form binds its handler only once.
+    if (f.dataset.gotoBound) return;
+    f.dataset.gotoBound = '1';
     f.addEventListener('submit', function (e) {
       e.preventDefault();
       var n = parseInt(f.querySelector('input').value, 10);
