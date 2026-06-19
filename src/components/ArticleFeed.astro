@@ -48,7 +48,7 @@ const endIndex = offset + articles.length;
 ---
 <Home title="Maritime Reader — Latest maritime news, P&I circulars, and class notices">
   <HomepageMasthead />
-  <SearchFilter />
+  <SearchFilter total={total} />
 
   {/* Static server-rendered feed. SearchFilter's JS hides this (#static-feed)
       and shows its own Pagefind card results when a query/facet is active. */}
@@ -56,15 +56,13 @@ const endIndex = offset + articles.length;
   <div class="max-w-7xl 2xl:max-w-[100rem] mx-auto px-4 py-6 flex gap-6 items-start">
     <section class="flex-1 min-w-0 bg-white rounded-lg border border-slate-200">
       <div class="px-4 py-6">
-        <header class="flex items-baseline justify-between mb-4">
-          <h2 class="text-lg font-bold tracking-tight text-slate-900">
-            Latest Updates
-            {total > 0 && (
-              <span class="ml-2 text-sm font-normal text-slate-500">({countLabel})</span>
-            )}
-          </h2>
+        <header class="flex items-start justify-between gap-3 mb-4">
+          <div>
+            <h2 class="text-lg font-bold tracking-tight text-slate-900">Latest Updates</h2>
+            <p class="mt-0.5 text-xs text-slate-500">Newest maritime news &amp; documents — search above to explore all {countLabel} documents in the archive.</p>
+          </div>
           {totalPages > 1 && (
-            <span class="text-xs text-slate-500">
+            <span class="text-xs text-slate-500 shrink-0 whitespace-nowrap">
               Page {page.toLocaleString('en-US')} of {totalPages.toLocaleString('en-US')}
             </span>
           )}
