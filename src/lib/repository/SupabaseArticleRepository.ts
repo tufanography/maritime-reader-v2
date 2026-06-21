@@ -206,6 +206,7 @@ export class SupabaseArticleRepository implements ArticleRepository {
     // the real ~51k (why it had to be hardcoded for hotfix builds). Memoized
     // (called ~3×/build). Falls back to the read length only if the estimate fails.
     if (_countMemo != null) return _countMemo;
+    let estimate: number | null = null;
     try {
       const { count, error } = await supabase
         .from('articles')
@@ -213,8 +214,32 @@ export class SupabaseArticleRepository implements ArticleRepository {
         .or('content_quality.is.null,content_quality.in.(visible,pending)')
         .not('published_at', 'is', null)
         .lte('published_at', new Date().toISOString());
-      if (!error && typeof count === 'number') { _countMemo = count; return count; }
-    } catch { /* fall through to the read-length fallback */ }
+      if (!error && typeof count === 'number') estimate = count;
+    } catch { /* fall through */ }
+
+    // CLAMP the planner estimate to the EXACT total row count so the displayed
+    // number can never exceed reality. The estimated visible-count drifts ABOVE
+    // the true count during heavy UPDATE churn — e.g. backlog AI-classification
+    // mutating thousands of rows inflates pg_class.reltuples until autovacuum
+    // catches up (MEASURED 2026-06-21 mid-classification: estimate 60,025 vs
+    // 57,968 total rows / 55,451 actually visible → hero wrongly read "60,000+").
+    // An UNFILTERED count:'exact' is light enough on Nano (no per-row filter,
+    // unlike the visible-filtered exact count which statement-timeouts) to serve
+    // as a hard ceiling. Best-effort: if it fails we keep the raw estimate, so
+    // this never regresses below today's behaviour.
+    if (estimate != null) {
+      let total: number | null = null;
+      try {
+        const { count, error } = await supabase
+          .from('articles')
+          .select('id', { count: 'exact', head: true });
+        if (!error && typeof count === 'number') total = count;
+      } catch { /* keep raw estimate */ }
+      _countMemo = total != null ? Math.min(estimate, total) : estimate;
+      return _countMemo;
+    }
+
+    // Both count paths unavailable → fall back to the loaded read length.
     const all = await this.listVisible(ARTICLE_PAGE_LIMIT);
     _countMemo = all.length;
     return _countMemo;
