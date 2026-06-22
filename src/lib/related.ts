@@ -38,6 +38,12 @@ const DOCTYPE_WEIGHT = 1;
 // quality — rare/precise keyword buckets are almost always under the cap, so
 // old precise matches via specific keywords are preserved.
 const CAP_K = 600;
+// A candidate qualifies on keywords ALONE only when the overlap is strong
+// (Jaccard ≥ this). A lone generic shared keyword ("China", "United States")
+// gives a tiny Jaccard and must NOT surface an otherwise-unrelated article —
+// the freshest articles have empty themes, so without this gate keyword noise
+// dominated (user-reported 2026-06-23: irrelevant related on recent articles).
+const KW_JACCARD_MIN = 0.3;
 
 const norm = (s: string) => s.trim().toLowerCase();
 
@@ -47,11 +53,15 @@ function normSet(arr: string[] | null | undefined): Set<string> {
   return out;
 }
 
-function jaccard(a: Set<string>, b: Set<string>): number {
+function intersectCount(a: Set<string>, b: Set<string>): number {
   if (!a.size || !b.size) return 0;
   let inter = 0;
   const [small, big] = a.size <= b.size ? [a, b] : [b, a];
   for (const x of small) if (big.has(x)) inter++;
+  return inter;
+}
+
+function jaccardFrom(a: Set<string>, b: Set<string>, inter: number): number {
   const uni = a.size + b.size - inter;
   return uni ? inter / uni : 0;
 }
@@ -84,14 +94,24 @@ function prep(a: Relatable): Prepped {
   return { art: a, themeSet: normSet(a.themes), segSet: normSet(a.segments), kwSet: normSet(a.keywords) };
 }
 
-/** Relatedness score of candidate `c` against article `a`. ≥0; higher = more related. */
-export function scoreRelated(a: Prepped, c: Prepped, nowMs: number): number {
-  if (a.art.id === c.art.id) return 0;
-  const kw = jaccard(a.kwSet, c.kwSet) * KW_WEIGHT;
-  const th = sharedCount(a.art.themes, c.themeSet) * THEME_WEIGHT;
-  const sg = sharedCount(a.art.segments, c.segSet) * SEGMENT_WEIGHT;
+/**
+ * Score candidate `c` against `a` AND decide whether it qualifies to be shown.
+ * `ok` gates INCLUSION — a candidate is surfaced only with a genuine topical
+ * tie: a shared theme, OR a shared segment AND a shared keyword, OR strong
+ * keyword overlap (Jaccard ≥ KW_JACCARD_MIN). docType + recency only refine
+ * RANKING; they can never carry a topically-weak match into the results.
+ */
+export function evaluate(a: Prepped, c: Prepped, nowMs: number): { score: number; ok: boolean } {
+  if (a.art.id === c.art.id) return { score: 0, ok: false };
+  const inter = intersectCount(a.kwSet, c.kwSet);
+  const kwJac = jaccardFrom(a.kwSet, c.kwSet, inter);
+  const th = sharedCount(a.art.themes, c.themeSet);
+  const sg = sharedCount(a.art.segments, c.segSet);
+  const ok = th >= 1 || (sg >= 1 && inter >= 1) || kwJac >= KW_JACCARD_MIN;
+  if (!ok) return { score: 0, ok: false };
   const dt = a.art.documentType && a.art.documentType === c.art.documentType ? DOCTYPE_WEIGHT : 0;
-  return kw + th + sg + dt + recencyBonus(c.art.publishedAt, nowMs);
+  const score = kwJac * KW_WEIGHT + th * THEME_WEIGHT + sg * SEGMENT_WEIGHT + dt + recencyBonus(c.art.publishedAt, nowMs);
+  return { score, ok: true };
 }
 
 /**
@@ -131,7 +151,7 @@ export function buildRelatedIndex(
     add(kwBucket, p.kwSet);
 
     const scored: { j: number; s: number }[] = [];
-    cand.forEach((j) => { const s = scoreRelated(p, prepped[j], opts.nowMs); if (s > 0) scored.push({ j, s }); });
+    cand.forEach((j) => { const e = evaluate(p, prepped[j], opts.nowMs); if (e.ok) scored.push({ j, s: e.score }); });
     scored.sort((x, y) => {
       if (y.s !== x.s) return y.s - x.s;
       const tx = Date.parse(all[x.j].publishedAt ?? '') || 0;
