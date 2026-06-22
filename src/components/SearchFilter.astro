@@ -378,17 +378,17 @@ const docCount = (Math.floor((total || 54000) / 1000) * 1000).toLocaleString('en
     <p class="text-xl font-semibold text-slate-600 tracking-tight mt-5">Searching the archive…</p>
   </div>
   {/* GLOBAL sort toggle — a single sliding switch that drives the order of the
-      WHOLE result set (Best + Broader + the single/ungrouped list). Left = relevance
-      (sortPref=null), right = newest (sortPref='date'). It is ONE element that run()
+      WHOLE result set (Best + Broader + the single/ungrouped list). Left = newest
+      (sortPref='date', the default), right = relevance (sortPref=null). It is ONE element that run()
       relocates per render: directly below the "Best matches" heading for grouped
       queries, or at the top of #sf-results for single/ungrouped queries. Hidden when
       there are no results. Clicking the track OR either label toggles. */}
   <div id="sf-sort" class="hidden">
-    <span id="sf-sort-rel" class="sf-sort-lbl">Most relevant first</span>
+    <span id="sf-sort-date" class="sf-sort-lbl">Newest first</span>
     <button id="sf-sort-track" type="button" role="switch" aria-checked="false" aria-label="Sort order">
       <span class="sf-sort-thumb"></span>
     </button>
-    <span id="sf-sort-date" class="sf-sort-lbl">Newest first</span>
+    <span id="sf-sort-rel" class="sf-sort-lbl">Most relevant first</span>
   </div>
   {/* Grouped results: Best matches (exact phrase / topic) then Broader matches (words appear separately) */}
   <div id="sf-best-wrap" class="hidden">
@@ -670,8 +670,8 @@ const docCount = (Math.floor((total || 54000) / 1000) * 1000).toLocaleString('en
     function chipClass(on) { return 'sf-chip' + (on ? ' on' : ''); }
     var chipEls = {}; // facet -> [{value, btn}]
 
-    // GLOBAL sort toggle helpers. State mirrors sortPref: null = relevance (thumb
-    // LEFT), 'date' = newest (thumb RIGHT). syncSortToggle() reflects the visual
+    // GLOBAL sort toggle helpers. State mirrors sortPref: 'date' = newest (thumb
+    // LEFT, the default), null = relevance (thumb RIGHT). syncSortToggle() reflects the visual
     // state; showSortToggle(container, on) moves the single toggle element into the
     // right container (prepended) and shows/hides it.
     function syncSortToggle() {
@@ -1319,13 +1319,13 @@ const docCount = (Math.floor((total || 54000) / 1000) * 1000).toLocaleString('en
     cursor: pointer; padding: 0; transition: background-color 120ms ease;
   }
   .sf-sort-thumb {
-    position: absolute; top: 50%; left: 3px;
+    position: absolute; top: 50%; left: 23px;                /* default = relevance → thumb RIGHT (relevance label now on the right). 44 − 18 − 3 = 23 */
     width: 18px; height: 18px; border-radius: 9999px;
     background: #378add; transform: translateY(-50%);
     transition: left 140ms cubic-bezier(0.4, 0, 0.2, 1);
     box-shadow: 0 1px 2px rgba(15, 23, 42, 0.25);
   }
-  #sf-sort.is-date .sf-sort-thumb { left: 23px; }            /* 44 − 18 − 3 = 23 */
+  #sf-sort.is-date .sf-sort-thumb { left: 3px; }             /* newest/date → thumb LEFT (Newest label is now on the left, and is the default) */
 
   /* Group section headers (BEST MATCHES / BROADER MATCHES) — centered, dark red */
   .sf-group-label {
