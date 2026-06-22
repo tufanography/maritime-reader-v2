@@ -10,5 +10,6 @@ export type Article = {
   documentType: string | null;
   segments: string[];
   themes: string[];
+  keywords: string[];
   imageUrl: string | null;
 };

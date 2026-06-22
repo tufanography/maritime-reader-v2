@@ -69,6 +69,7 @@ type Row = {
   document_type: string | null;
   segments: string[] | null;
   semantic_themes: string[] | null;
+  keywords: string[] | null;
   image_url: string | null;
   sources: { name: string } | { name: string }[] | null;
 };
@@ -90,12 +91,13 @@ function toArticle(r: Row): Article {
     documentType: r.document_type,
     segments: r.segments ?? [],
     themes: r.semantic_themes ?? [],
+    keywords: r.keywords ?? [],
     imageUrl: r.image_url,
   };
 }
 
 const SELECT =
-  'id, title, url, raw_excerpt, published_at, document_type, segments, semantic_themes, image_url, sources(name)';
+  'id, title, url, raw_excerpt, published_at, document_type, segments, semantic_themes, keywords, image_url, sources(name)';
 
 // Shared visibility predicate — kept in one place so every list query is
 // consistent. If we ever add a new "list by X" method, it goes through

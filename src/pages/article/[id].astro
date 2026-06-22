@@ -26,22 +26,28 @@
 import Home from '@/layouts/Home.astro';
 import HomepageMasthead from '@/components/HomepageMasthead.astro';
 import FilterBar from '@/components/FilterBar.astro';
+import CompactArticleCard from '@/components/CompactArticleCard.astro';
 import { articleRepo } from '@/lib/repository/SupabaseArticleRepository';
 import { THEME_LABEL, SEGMENT_LABEL, THEMES, SEGMENTS, type Theme, type Segment } from '@/lib/taxonomy';
 import { slugify } from '@/lib/slug';
 import type { Article } from '@/lib/repository/types';
 import { ARTICLE_PAGE_LIMIT } from '@/lib/config';
+import { buildRelatedIndex } from '@/lib/related';
 
 export async function getStaticPaths() {
   const articles = await articleRepo.listVisible(ARTICLE_PAGE_LIMIT);
+  // Build the relatedness index ONCE over the loaded corpus (full archive on a
+  // base build; recent slice on a delta build), then bake related[] into each
+  // page's props. Zero per-page DB cost (articles already in hand).
+  const relatedIndex = buildRelatedIndex(articles, { limit: 6, nowMs: Date.now() });
   return articles.map((article: Article) => ({
     params: { id: article.id },
-    props: { article },
+    props: { article, related: (relatedIndex.get(article.id) ?? []) as Article[] },
   }));
 }
 
-interface Props { article: Article; }
-const { article: a } = Astro.props;
+interface Props { article: Article; related: Article[]; }
+const { article: a, related } = Astro.props;
 
 const themeSet = new Set<string>(THEMES);
 const segSet = new Set<string>(SEGMENTS);
@@ -245,4 +251,19 @@ const desc = a.excerpt?.slice(0, 160) ?? a.title;
       <a href="/" class="text-sm text-slate-500 hover:text-sky-600">← Back to latest</a>
     </div>
   </article>
+
+  {/* RELATED KNOWLEDGE — documents most related to this one (shared keywords/
+      themes/segments, scored at build time in src/lib/related.ts). Placed
+      OUTSIDE the <article data-pagefind-body> above on purpose: neighbour
+      titles must NOT be indexed as this article's own search text. Hidden
+      when there are no related docs (sparse metadata). */}
+  {related.length > 0 && (
+    <section class="max-w-5xl mx-auto px-4 pb-12">
+      <h2 class="text-base font-bold tracking-tight text-slate-900 mb-1">Related Knowledge</h2>
+      <p class="text-xs text-slate-500 mb-4">Documents on the same topic from the archive</p>
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        {related.map((r) => <CompactArticleCard article={r} />)}
+      </div>
+    </section>
+  )}
 </Home>
