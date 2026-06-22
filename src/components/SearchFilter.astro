@@ -1307,11 +1307,11 @@ const docCount = (Math.floor((total || 54000) / 1000) * 1000).toLocaleString('en
      visible on facet-only/browse views (user 2026-06-12). This id+class rule wins. */
   #sf-sort.hidden { display: none; }
   .sf-sort-lbl {
-    font-size: 0.78rem; font-weight: 400; color: #94a3b8;   /* slate-400 muted */
+    font-size: 1rem; font-weight: 500; color: #94a3b8;      /* ~16px — close to (under) the 20px BEST MATCHES header */
     cursor: pointer; white-space: nowrap;
     transition: color 120ms ease, font-weight 120ms ease;
   }
-  .sf-sort-lbl.on { color: #1d9e75; font-weight: 500; }      /* active = green */
+  .sf-sort-lbl.on { color: #1d9e75; font-weight: 600; }      /* active = green, slightly bolder than the 500 base */
   #sf-sort-track {
     position: relative; flex: none;
     width: 44px; height: 24px; border-radius: 12px;
