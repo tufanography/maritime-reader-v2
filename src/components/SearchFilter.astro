@@ -487,7 +487,7 @@ const docCount = (Math.floor((total || 54000) / 1000) * 1000).toLocaleString('en
       qClear.classList.toggle('flex', has);
     }
 
-    var pf = null, pending = null, debounce = null;
+    var pf = null, pfDelta = null, pending = null, debounce = null;
     var sel = { q: '', type: new Set(), segment: new Set(), theme: new Set(), source: new Set() };
     // Result groups for the current search (set by run()): single (ungrouped), or
     // Best + Broader. Each is a group object {streams, byDate, seen, excludeIds}.
@@ -1053,7 +1053,17 @@ const docCount = (Math.floor((total || 54000) / 1000) * 1000).toLocaleString('en
           if (pending !== token) return;
           sres.forEach(function (s, i) { addActive(sterms[i], s.results); });
           updateChipCounts(); renderActiveTerms();
-          curSingle = { tiers: [ sres.map(function (s) { return { results: s.results, idx: 0 }; }) ], byDate: !useRel, seen: {} };
+          var sStreams = sres.map(function (s) { return { results: s.results, idx: 0 }; });
+          // B (2026-06-25): on date-sorted runs, add the delta-only index as extra streams
+          // so the k-way date merge surfaces fresh delta articles above base's (weekly) newest
+          // — fixes the stale SOURCE-filtered browse. Deduped by url in pullGroup. Count
+          // (stotal) stays from `sres` (the merged index) so it isn't double-counted.
+          if (sOpts.sort && sOpts.sort.date && pfDelta) {
+            var dres = await Promise.all(sterms.map(function (t) { return pfDelta.search(t, sOpts).then(function (d) { return d.results; }, function () { return []; }); }));
+            if (pending !== token) return;
+            dres.forEach(function (rs) { sStreams.push({ results: rs, idx: 0 }); });
+          }
+          curSingle = { tiers: [ sStreams ], byDate: !useRel, seen: {} };
           curBest = curBroader = null;
           var ids = {}; sres.forEach(function (s) { for (var i = 0; i < s.results.length; i++) ids[s.results[i].id] = 1; });
           var stotal = Object.keys(ids).length;
@@ -1204,6 +1214,15 @@ const docCount = (Math.floor((total || 54000) / 1000) * 1000).toLocaleString('en
         // search still works. Overlap with base is deduped at render (by result.url).
         try { await pf.mergeIndex((base || '') + '/_pagefind-delta', { baseUrl: '/' }); }
         catch (e) { /* delta not deployed yet — base-only search is fine */ }
+        // SEPARATE delta-only instance (2026-06-25). pf.mergeIndex sorts `date` WITHIN
+        // each index (all base results first, delta appended), so a date-sorted browse /
+        // "Newest" query pins base's newest (≤ the weekly base build) ABOVE delta's fresher
+        // articles — e.g. a SOURCE-filtered browse showed up to ~3 days stale. We load the
+        // delta index as its OWN Pagefind instance and, on date-sorted runs, add its results
+        // as an extra stream so the k-way date merge (pullGroup) surfaces fresh delta articles
+        // on top (deduped by url against the base stream). Base-only if delta is absent.
+        try { pfDelta = await import((base || '') + '/_pagefind-delta/pagefind.js'); await pfDelta.options({ baseUrl: '/' }); await pfDelta.init(); }
+        catch (e) { pfDelta = null; /* delta not deployed / dev — base-only is fine */ }
         var avail = await pf.filters(); // ONE call (post-merge) — builds the facet UI
         buildFacetsOnce(avail);
         readURL();
