@@ -23,6 +23,7 @@ const PAGE_FETCH_CHUNK = 500;
 // fresh build process starts with this null; it is NEVER used at runtime (the
 // deployed site is static, no DB).
 let _visibleMemo: { limit: number; rows: Article[] } | null = null;
+let _feedMemo: Article[] | null = null;  // listVisible minus inferred-date rows (homepage feed), computed once
 let _countMemo: number | null = null; // visible total, computed once per build (see countVisible)
 
 // Build resilience. The Supabase connection from the build machine has
@@ -195,10 +196,14 @@ export class SupabaseArticleRepository implements ArticleRepository {
     return all.slice(offset, offset + limit);
   }
 
-  /** listVisible minus inferred-date rows — the homepage freshness feed. */
+  /** listVisible minus inferred-date rows — the homepage freshness feed.
+   *  Memoized: pagination route generation calls listVisiblePage ~100× per build,
+   *  so the O(n) filter over the full memo runs once, not once per page. */
   private async listVisibleFeed(): Promise<Article[]> {
+    if (_feedMemo) return _feedMemo;
     const all = await this.listVisible(ARTICLE_PAGE_LIMIT);
-    return all.filter((a) => a.publishedAtSource !== 'scraper_default');
+    _feedMemo = all.filter((a) => a.publishedAtSource !== 'scraper_default');
+    return _feedMemo;
   }
 
   // How many articles are ACTUALLY loaded into this build (capped by
