@@ -6,6 +6,7 @@ export type Article = {
   url: string;
   excerpt: string | null;
   publishedAt: string | null; // ISO 8601
+  publishedAtSource: string | null; // 'original'|'scraper_default'(=inferred date)|...
   sourceName: string | null;
   documentType: string | null;
   segments: string[];

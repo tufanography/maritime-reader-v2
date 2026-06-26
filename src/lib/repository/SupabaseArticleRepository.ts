@@ -66,6 +66,7 @@ type Row = {
   url: string;
   raw_excerpt: string | null;
   published_at: string | null;
+  published_at_source: string | null;
   document_type: string | null;
   segments: string[] | null;
   semantic_themes: string[] | null;
@@ -87,6 +88,7 @@ function toArticle(r: Row): Article {
     url: r.url,
     excerpt: r.raw_excerpt,
     publishedAt: r.published_at,
+    publishedAtSource: r.published_at_source,
     sourceName: sourceName(r),
     documentType: r.document_type,
     segments: r.segments ?? [],
@@ -97,7 +99,7 @@ function toArticle(r: Row): Article {
 }
 
 const SELECT =
-  'id, title, url, raw_excerpt, published_at, document_type, segments, semantic_themes, keywords, image_url, sources(name)';
+  'id, title, url, raw_excerpt, published_at, published_at_source, document_type, segments, semantic_themes, keywords, image_url, sources(name)';
 
 // Shared visibility predicate — kept in one place so every list query is
 // consistent. If we ever add a new "list by X" method, it goes through
@@ -184,8 +186,19 @@ export class SupabaseArticleRepository implements ArticleRepository {
     // Served from the memoized full read (no separate offset query). The full
     // list is already ordered published_at DESC, so a slice IS the page — this
     // also sidesteps the deep-offset statement_timeout entirely, at any depth.
-    const all = await this.listVisible(ARTICLE_PAGE_LIMIT);
+    // FEED EXCLUDES inferred-date rows (published_at_source='scraper_default'):
+    // their day is unknown (P&I circulars/press-releases the date-fallback dated),
+    // so they'd pollute the newest-first feed with old content dated "today". They
+    // stay in listVisible() → article pages built → Pagefind-searchable; only the
+    // freshness feed drops them. (6 legacy scraper_default rows also drop — accepted.)
+    const all = await this.listVisibleFeed();
     return all.slice(offset, offset + limit);
+  }
+
+  /** listVisible minus inferred-date rows — the homepage freshness feed. */
+  private async listVisibleFeed(): Promise<Article[]> {
+    const all = await this.listVisible(ARTICLE_PAGE_LIMIT);
+    return all.filter((a) => a.publishedAtSource !== 'scraper_default');
   }
 
   // How many articles are ACTUALLY loaded into this build (capped by
@@ -194,7 +207,9 @@ export class SupabaseArticleRepository implements ArticleRepository {
   // page routes for the whole archive and pages past the loaded slice render
   // empty ("no article"). Memoized read, so no extra DB cost.
   async loadedCount(): Promise<number> {
-    return (await this.listVisible(ARTICLE_PAGE_LIMIT)).length;
+    // Feed pagination denominator → count the FEED (excludes inferred-date rows),
+    // so page routes match what listVisiblePage actually serves.
+    return (await this.listVisibleFeed()).length;
   }
 
   async countVisible(): Promise<number> {
