@@ -37,9 +37,31 @@ const base = (import.meta.env.PUBLIC_PAGEFIND_BASE ?? '').replace(/\/$/, '');
   const out = document.getElementById('hsearch-results');
   if (input && out) {
     let pfPromise = null;
-    const loadPf = () => (pfPromise ??= import((base || '') + '/_pagefind/pagefind.js')
-      .then(async (pf) => { await pf.init(); return pf; })
-      .catch(() => null));
+    // Mirror the proven SearchFilter.astro load sequence. The /* @vite-ignore */
+    // is REQUIRED: this is a BUNDLED module script (so we can import searchExpand),
+    // and without it Vite wraps the dynamic import in its preload helper and fails
+    // to load Pagefind's generated pagefind.js (which lives outside the build).
+    // SearchFilter avoids this only because it is an is:inline script.
+    const loadPf = () => (pfPromise ??= (async () => {
+      const pf = await import(/* @vite-ignore */ (base || '') + '/_pagefind/pagefind.js');
+      // bundlePath is set EXPLICITLY (not auto-detected): when this bundled
+      // module is imported from a deep page like /article/<id>/, Pagefind's
+      // auto-detection resolved pagefind-entry.json page-relative
+      // (/article/<id>/_pagefind/…) → 404 HTML → "metadata is not valid JSON".
+      // Pinning bundlePath to the index root fixes it (local and on R2).
+      await pf.options({ baseUrl: '/', bundlePath: (base || '') + '/_pagefind/' });
+      await pf.init();
+      // Merge the DELTA index (recent, rebuilt every few hours) on top of BASE.
+      // PROBE FIRST: a failing mergeIndex (404 → HTML → "not valid JSON") does
+      // not stay contained by try/catch — it leaves pf in a state where search
+      // returns nothing. So we only mergeIndex when the delta entry actually
+      // exists. Absent (local build / not-yet-deployed) → BASE-only search works.
+      try {
+        const probe = await fetch((base || '') + '/_pagefind-delta/pagefind-entry.json', { cache: 'no-cache' });
+        if (probe.ok) await pf.mergeIndex((base || '') + '/_pagefind-delta', { baseUrl: '/' });
+      } catch (e) { /* delta absent → base-only, fine */ }
+      return pf;
+    })().catch((e) => { console.error('[hsearch] pagefind load failed', e); return null; }));
 
     // Warm the index during idle so the first search is fast.
     if ('requestIdleCallback' in window) requestIdleCallback(() => loadPf(), { timeout: 3000 });
