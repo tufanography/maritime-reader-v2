@@ -1,0 +1,84 @@
+---
+// Expansion search (Phase 1 of hybrid) — OFF by default, enabled by
+// PUBLIC_HYBRID_SEARCH=1. Uses the Pagefind JS API (not the UI widget) so we
+// can run OR-variant queries and merge them — Pagefind's term semantics are AND,
+// so query expansion REQUIRES this multi-search + RRF-merge approach (see
+// src/lib/searchExpand.ts). Same static index on R2 as the widget; no new infra,
+// no server, no AI, $0. Keyword + synonym expansion only; the semantic vector
+// half (R2 vector artifact + reranker) layers on later as additional result
+// lists fed into the same rrfMerge.
+const base = (import.meta.env.PUBLIC_PAGEFIND_BASE ?? '').replace(/\/$/, '');
+---
+<div id="hsearch" class="hsearch" data-base={base}>
+  <input id="hsearch-input" type="search" autocomplete="off" placeholder="Search maritime news…" aria-label="Search maritime news" />
+  <div id="hsearch-results" class="hsearch-results" role="listbox" aria-label="Search results"></div>
+</div>
+
+<style>
+  .hsearch { margin: 6px 0 14px; position: relative; }
+  .hsearch input { width: 100%; padding: 10px 12px; font-size: 1rem; border: 1px solid var(--border, #d0d5dd); border-radius: 8px; box-sizing: border-box; }
+  .hsearch-results { margin-top: 8px; display: grid; gap: 8px; }
+  .hsearch-results a { display: block; text-decoration: none; color: inherit; padding: 8px 10px; border: 1px solid var(--border, #e5e7eb); border-radius: 8px; }
+  .hsearch-results a:hover { background: var(--hover, #f7f8fa); }
+  .hsearch-results .ht { font-weight: 600; margin-bottom: 2px; }
+  .hsearch-results .hx { font-size: 0.85rem; opacity: 0.75; }
+  .hsearch-empty { font-size: 0.85rem; opacity: 0.6; padding: 4px 2px; }
+</style>
+
+<script>
+  // Plain (bundled) module script — imports are resolved at build. `base` is
+  // read from the container's data attribute (a define:vars script would be
+  // treated as is:inline and would NOT bundle this import).
+  import { expandToVariants, rrfMerge } from '../lib/searchExpand';
+
+  const root = document.getElementById('hsearch');
+  const base = (root && root.dataset.base) || '';
+  const input = document.getElementById('hsearch-input');
+  const out = document.getElementById('hsearch-results');
+  if (input && out) {
+    let pfPromise = null;
+    const loadPf = () => (pfPromise ??= import((base || '') + '/_pagefind/pagefind.js')
+      .then(async (pf) => { await pf.init(); return pf; })
+      .catch(() => null));
+
+    // Warm the index during idle so the first search is fast.
+    if ('requestIdleCallback' in window) requestIdleCallback(() => loadPf(), { timeout: 3000 });
+
+    let seq = 0;
+    async function run(query) {
+      const mySeq = ++seq;
+      const q = query.trim();
+      if (q.length < 2) { out.innerHTML = ''; return; }
+      const pf = await loadPf();
+      if (!pf || mySeq !== seq) return;
+
+      // OR across synonym variants: one Pagefind search per variant, then
+      // RRF-merge the result sets. Variant 0 is the original query (weighted).
+      const variants = expandToVariants(q);
+      const lists = await Promise.all(variants.map(async (v) => {
+        try { return (await pf.search(v)).results.map((r) => ({ id: r.id, _r: r })); }
+        catch { return []; }
+      }));
+      if (mySeq !== seq) return;
+
+      const merged = rrfMerge(lists, 60, 20);
+      const top = merged.slice(0, 12);
+      const data = await Promise.all(top.map((m) => m._r.data().catch(() => null)));
+      if (mySeq !== seq) return;
+
+      const rows = data.filter(Boolean).map((d) => {
+        const title = (d.meta && d.meta.title) || d.url;
+        const ex = (d.excerpt || '').replace(/<[^>]+>/g, '');
+        return `<a href="${d.url}" role="option"><div class="ht">${title}</div><div class="hx">${ex.slice(0, 140)}</div></a>`;
+      });
+      out.innerHTML = rows.length ? rows.join('') : '<div class="hsearch-empty">No results.</div>';
+    }
+
+    let t;
+    input.addEventListener('input', (e) => {
+      clearTimeout(t);
+      const v = e.target.value;
+      t = setTimeout(() => run(v), 180);
+    });
+  }
+</script>
