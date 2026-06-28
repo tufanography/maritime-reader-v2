@@ -555,6 +555,17 @@ const docCount = (Math.floor((total || 54000) / 1000) * 1000).toLocaleString('en
       });
     }
     function filterBlocked(arr) { return (arr || []).filter(function (x) { return !BLOCKED[norm(x)]; }); }
+    // Panel terms for a topic. Synonym topics (_syn, from the maritime synonym
+    // expansion) BYPASS the blocked-single-word filter so "fire/crew/tanker" show
+    // as untickable related chips (the whole point is to expose the synonyms);
+    // normal topics keep the blocked filter. Always drop the term the user typed
+    // so we don't list their own query back as a "related" chip.
+    function relTerms(tk, q) {
+      var t = MAP[tk] || {};
+      var arr = t._syn ? (t.related || []) : filterBlocked(t.related);
+      var qn = norm(q || '');
+      return arr.filter(function (x) { return norm(x) !== qn; });
+    }
     // Returns { title, terms } for the matched panel, or null.
     function relatedFor(q) {
       if (!q || isQuoted(q) || !MAP) return null;
@@ -562,7 +573,7 @@ const docCount = (Math.floor((total || 54000) / 1000) * 1000).toLocaleString('en
       if (!t) return null;
       // seeds = strong "Best" seed phrases the match itself implies (topic triggers,
       // or the matched narrow/related key) — fed into Best alongside the selected chips.
-      if (TRIGGERS[t]) { var m = TRIGGERS[t]; return { title: m.label, terms: filterBlocked(MAP[m.topic].related), seeds: (MAP[m.topic].triggers || []).slice(), exact: !!MAP[m.topic].exact }; }
+      if (TRIGGERS[t]) { var m = TRIGGERS[t]; return { title: m.label, terms: relTerms(m.topic, q), seeds: (MAP[m.topic].triggers || []).slice(), exact: !!MAP[m.topic].exact }; }
       if (NARROW[t]) { var nn = NARROW[t]; return { title: nn.key, terms: filterBlocked(MAP[nn.topic].narrow[nn.key]), seeds: [nn.key] }; }
       if (RELATED[t]) { var rr = RELATED[t]; var nar = MAP[rr.topic].narrow && MAP[rr.topic].narrow[rr.term]; return nar ? { title: rr.term, terms: filterBlocked(nar), seeds: [rr.term] } : null; }
       // A broad single word ("cargo", "inspection", "crew"...) must NOT prefix-expand
@@ -572,7 +583,7 @@ const docCount = (Math.floor((total || 54000) / 1000) * 1000).toLocaleString('en
       if (t.length >= 3) {
         var best = null;
         for (var i = 0; i < TRIGGER_NORMS.length; i++) { var tn = TRIGGER_NORMS[i]; if (tn.indexOf(t) === 0 && (!best || tn.length < best.length)) best = tn; }
-        if (best) { var bm = TRIGGERS[best]; return { title: bm.label, terms: filterBlocked(MAP[bm.topic].related), seeds: (MAP[bm.topic].triggers || []).slice(), exact: !!MAP[bm.topic].exact }; }
+        if (best) { var bm = TRIGGERS[best]; return { title: bm.label, terms: relTerms(bm.topic, q), seeds: (MAP[bm.topic].triggers || []).slice(), exact: !!MAP[bm.topic].exact }; }
       }
       return null;
     }
@@ -1206,23 +1217,32 @@ const docCount = (Math.floor((total || 54000) / 1000) * 1000).toLocaleString('en
         pf = await import((base || '') + '/_pagefind/pagefind.js');
         await pf.options({ baseUrl: '/' });
         await pf.init();
+        // PROBE the delta index BEFORE touching it. When _pagefind-delta is absent
+        // (local build / preview, or a delta deploy that hasn't run yet), a failing
+        // mergeIndex / pfDelta import does NOT stay contained by try/catch — it
+        // 404s to HTML ("metadata is not valid JSON") and leaves Pagefind in a
+        // state where search returns ZERO results. Probing first keeps base-only
+        // search fully working (this is why local preview previously returned
+        // nothing). Measured 2026-06-28.
+        var deltaOk = false;
+        try { deltaOk = (await fetch((base || '') + '/_pagefind-delta/pagefind-entry.json', { cache: 'no-cache' })).ok; }
+        catch (e) { deltaOk = false; }
         // Merge the DELTA index (recent ~2 weeks, rebuilt every 3h) on top of the
         // static BASE index (full archive, rebuilt weekly) → search stays ~3h-fresh
         // without re-reading all 51k rows from Nano. baseUrl:'/' so delta result
         // URLs resolve to the real /article/<id>/ detail pages, not /_pagefind-delta/…
-        // (measured 2026-06-08). Wrapped: if the delta isn't deployed yet, base-only
-        // search still works. Overlap with base is deduped at render (by result.url).
-        try { await pf.mergeIndex((base || '') + '/_pagefind-delta', { baseUrl: '/' }); }
-        catch (e) { /* delta not deployed yet — base-only search is fine */ }
-        // SEPARATE delta-only instance (2026-06-25). pf.mergeIndex sorts `date` WITHIN
-        // each index (all base results first, delta appended), so a date-sorted browse /
-        // "Newest" query pins base's newest (≤ the weekly base build) ABOVE delta's fresher
-        // articles — e.g. a SOURCE-filtered browse showed up to ~3 days stale. We load the
-        // delta index as its OWN Pagefind instance and, on date-sorted runs, add its results
-        // as an extra stream so the k-way date merge (pullGroup) surfaces fresh delta articles
-        // on top (deduped by url against the base stream). Base-only if delta is absent.
-        try { pfDelta = await import((base || '') + '/_pagefind-delta/pagefind.js'); await pfDelta.options({ baseUrl: '/' }); await pfDelta.init(); }
-        catch (e) { pfDelta = null; /* delta not deployed / dev — base-only is fine */ }
+        if (deltaOk) {
+          try { await pf.mergeIndex((base || '') + '/_pagefind-delta', { baseUrl: '/' }); }
+          catch (e) { /* unexpected — base-only search is fine */ }
+          // SEPARATE delta-only instance (2026-06-25). pf.mergeIndex sorts `date` WITHIN
+          // each index (all base results first, delta appended), so a date-sorted browse /
+          // "Newest" query pins base's newest (≤ the weekly base build) ABOVE delta's fresher
+          // articles. We load the delta index as its OWN Pagefind instance and, on
+          // date-sorted runs, add its results as an extra stream so the k-way date merge
+          // (pullGroup) surfaces fresh delta articles on top (deduped by url vs base).
+          try { pfDelta = await import((base || '') + '/_pagefind-delta/pagefind.js'); await pfDelta.options({ baseUrl: '/' }); await pfDelta.init(); }
+          catch (e) { pfDelta = null; }
+        }
         var avail = await pf.filters(); // ONE call (post-merge) — builds the facet UI
         buildFacetsOnce(avail);
         readURL();
