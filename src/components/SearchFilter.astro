@@ -621,9 +621,9 @@ const docCount = (Math.floor((total || 54000) / 1000) * 1000).toLocaleString('en
       var m = Math.max(0, (Date.now() - t) / 1000) / 60;
       if (m < 1) return 'just now'; if (m < 60) return Math.floor(m) + 'm ago';
       var h = m / 60; if (h < 24) return Math.floor(h) + 'h ago';
-      var d = h / 24; if (d < 7) return Math.floor(d) + 'd ago';
-      if (d < 30) return Math.floor(d / 7) + 'w ago';
-      if (d < 365) return Math.floor(d / 30) + 'mo ago'; return Math.floor(d / 365) + 'y ago';
+      var d = h / 24; if (d < 14) return Math.floor(d) + 'd ago';
+      if (d < 60) return Math.round(d / 7) + 'w ago';
+      if (d < 365) return Math.round(d / 30) + 'mo ago'; return Math.round(d / 365) + 'y ago';
     }
 
     function card(d, matched) {
