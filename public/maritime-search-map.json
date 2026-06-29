@@ -959,7 +959,6 @@
         "pre loading survey",
         "cargo sampling",
         "cargo testing",
-        "can test",
         "hold inspection"
       ],
       "narrow": {
@@ -1084,7 +1083,6 @@
         "liquefaction risk",
         "moisture content",
         "TML certificate",
-        "can test",
         "cargo sampling",
         "cargo testing",
         "unsafe cargo"
