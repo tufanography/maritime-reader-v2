@@ -1,0 +1,45 @@
+# maritime-semantic-search — Cloudflare Worker (FREE Workers plan)
+#
+# Purpose: embed the USER'S QUERY only (not the corpus). The client already holds
+# the corpus vectors (int8 artifact from R2) and does brute-force cosine + RRF
+# locally. This Worker's sole heavy op is a single Workers-AI bge-small call to
+# turn the query string into a 384-dim vector, which stays well under the free
+# plan's 10ms CPU limit (the AI binding runs on Cloudflare's inference fleet, not
+# in the Worker's CPU budget).
+#
+# Workers AI is used via the [ai] binding named `AI` (env.AI.run(...)).
+# There is NO API key in code or in this file — the binding handles auth.
+
+name = "maritime-semantic-search"
+main = "src/index.ts"
+compatibility_date = "2025-06-01"
+
+# --- Workers AI binding (no API key needed; auth is handled by the binding) ---
+[ai]
+binding = "AI"
+
+# --- Native rate limiting binding (Cloudflare unstable ratelimit API) ---
+# ~20 requests / 10 seconds per key (key = CF-Connecting-IP, set in code).
+# namespace_id must be a unique integer per Worker across your account.
+[[unsafe.bindings]]
+name = "RATE_LIMITER"
+type = "ratelimit"
+namespace_id = "1001"
+simple = { limit = 20, period = 10 }
+
+# --- Public, non-secret vars ---
+[vars]
+# Comma-separated allowlist. Origin is reflected in CORS ONLY if it matches one
+# of these exactly. Do NOT put secrets here.
+ALLOWED_ORIGINS = "https://maritimereader.com,https://www.maritimereader.com,http://localhost:8000"
+
+# --- Route (uncomment + set your zone when deploying) ---
+# Bind to a dedicated subdomain or a path on the site zone. Example:
+# [[routes]]
+# pattern = "search.maritimereader.com/*"
+# zone_name = "maritimereader.com"
+#
+# or a path route on the apex:
+# [[routes]]
+# pattern = "maritimereader.com/api/embed"
+# zone_name = "maritimereader.com"
