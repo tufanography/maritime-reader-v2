@@ -32,6 +32,13 @@
 
 const base = (import.meta.env.PUBLIC_PAGEFIND_BASE ?? '').replace(/\/$/, '');
 
+// Semantic search (2026-07): the query is embedded by a Cloudflare Worker (Workers
+// AI bge-small); the corpus int8 vectors + card metadata live on R2 at
+// `${base}/semantic/…`. The client does the brute-force cosine locally. This is
+// ADDITIVE — a separate "meaning-based" strip; the Pagefind keyword logic below is
+// untouched. Override the worker URL via PUBLIC_SEMANTIC_WORKER if it moves.
+const SEMANTIC_WORKER = (import.meta.env.PUBLIC_SEMANTIC_WORKER ?? 'https://maritime-semantic-search.emeksizugur.workers.dev').replace(/\/$/, '');
+
 // DEPRECATED (2026-06-10, Phase A): this inline SYNONYMS const is NO LONGER USED.
 // The search map moved to /public/maritime-search-map.json — a 3-layer
 // trigger/related/narrow structure FETCHED at runtime, so it is NOT inlined into
@@ -373,6 +380,10 @@ const docCount = (Math.floor((total || 54000) / 1000) * 1000).toLocaleString('en
 </script>
 
 <section id="sf-results-wrap" class="max-w-7xl 2xl:max-w-[100rem] mx-auto px-4 py-6 hidden">
+  {/* SEMANTIC (meaning-based) strip — additive + decoupled from Pagefind. Filled by
+      the sfx script at the end of this component from the R2 vector artifact. If it
+      errors it just stays hidden; keyword search is never affected. */}
+  <div id="sfx-wrap" class="hidden"></div>
   <div id="sf-loading" class="hidden text-center py-16">
     <div class="sf-sonar" aria-hidden="true"><span></span><span></span><span></span></div>
     <p class="text-xl font-semibold text-slate-600 tracking-tight mt-5">Searching the archive…</p>
@@ -1217,6 +1228,18 @@ const docCount = (Math.floor((total || 54000) / 1000) * 1000).toLocaleString('en
         pf = await import((base || '') + '/_pagefind/pagefind.js');
         await pf.options({ baseUrl: '/' });
         await pf.init();
+        // FACET COUNTS are snapshotted from the BASE index HERE, *before* mergeIndex.
+        // pf.filters() called AFTER a merge SUMS each value's count across base+delta,
+        // and the delta index (most-recent ~2100 articles) OVERLAPS the base archive —
+        // so every recently-active source/type/segment/theme was DOUBLE-COUNTED by its
+        // last-~2-week overlap window. MEASURED 2026-06-29 (live DB): the Splash247
+        // SOURCE dropdown read 9,685 while a Splash-filtered search returned the true
+        // 9,546 unique; the +139 was exactly the Splash rows inside the delta window
+        // (140 in DB, 1 of them newer than the last base build → delta-only, not doubled).
+        // Base is the weekly near-full archive, so this base-only count is at worst a
+        // few-days-stale UNDER-count (never over-claims, like the hero docCount floor)
+        // and self-heals on each base rebuild. SEARCH still uses the merged index below.
+        var avail = await pf.filters();
         // PROBE the delta index BEFORE touching it. When _pagefind-delta is absent
         // (local build / preview, or a delta deploy that hasn't run yet), a failing
         // mergeIndex / pfDelta import does NOT stay contained by try/catch — it
@@ -1242,8 +1265,23 @@ const docCount = (Math.floor((total || 54000) / 1000) * 1000).toLocaleString('en
           // (pullGroup) surfaces fresh delta articles on top (deduped by url vs base).
           try { pfDelta = await import((base || '') + '/_pagefind-delta/pagefind.js'); await pfDelta.options({ baseUrl: '/' }); await pfDelta.init(); }
           catch (e) { pfDelta = null; }
+          // Base-only counts (above) would HIDE the checkbox for any value whose first
+          // articles are all newer than the last weekly base build (a brand-new/recovered
+          // source visible only in delta). Union in values that base DOESN'T have, with
+          // their delta count — values already present in base keep the base count, so
+          // the overlap is NOT re-introduced. Self-corrects the rare "new source missing
+          // from the filter" gap until the next base rebuild. Best-effort.
+          if (pfDelta) {
+            try {
+              var availDelta = await pfDelta.filters();
+              Object.keys(availDelta || {}).forEach(function (k) {
+                var d = availDelta[k] || {};
+                if (!avail[k]) avail[k] = {};
+                Object.keys(d).forEach(function (v) { if (avail[k][v] == null) avail[k][v] = d[v]; });
+              });
+            } catch (e) { /* delta filters unavailable — base-only facets stand */ }
+          }
         }
-        var avail = await pf.filters(); // ONE call (post-merge) — builds the facet UI
         buildFacetsOnce(avail);
         readURL();
         syncQClear();
@@ -1407,4 +1445,93 @@ const docCount = (Math.floor((total || 54000) / 1000) * 1000).toLocaleString('en
     cursor: pointer; transition: background-color 80ms ease, color 80ms ease;
   }
   .sf-pill-x:hover { color: #e11d48; background: #ffe4e6; }   /* rose */
+</style>
+
+{/* ===================== SEMANTIC (meaning-based) STRIP =====================
+    Decoupled, additive layer (2026-07). Attaches its OWN debounced listener to
+    #sf-q and renders into #sfx-wrap — it never touches run() or Pagefind. On any
+    error it stays silent, so keyword search is unaffected. Lazily fetches the R2
+    artifact (int8 vectors + card metadata) on the first query, then does the
+    brute-force cosine in the browser; the query vector comes from the Worker. */}
+<script is:inline define:vars={{ sfxBase: base, sfxWorker: SEMANTIC_WORKER }}>
+  (function () {
+    var ART = (sfxBase || '') + '/semantic/';
+    var qEl = document.getElementById('sf-q');
+    var wrap = document.getElementById('sfx-wrap');
+    var resultsWrap = document.getElementById('sf-results-wrap');
+    if (!qEl || !wrap) return;
+    var VEC = null, META = null, CARDS = null, loaded = false, loadingP = null, token = 0, debounce;
+    var DOC = { news:'News', press_release:'Press', pi_circular:'P&I', class_notice:'Class', regulation:'Regulation', market_report:'Market', casualty_report:'Casualty', psc_report:'PSC' };
+    function esc(s){ return (s == null ? '' : String(s)).replace(/[&<>"]/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
+    function load(){
+      if (loaded) return Promise.resolve(true);
+      if (loadingP) return loadingP;
+      loadingP = fetch(ART + 'vectors.meta.json', { cache: 'no-cache' }).then(function(r){ if(!r.ok) throw 0; return r.json(); }).then(function(m){
+        META = m;
+        return Promise.all([
+          fetch(ART + 'vectors.bin').then(function(r){ if(!r.ok) throw 0; return r.arrayBuffer(); }),
+          fetch(ART + 'cards.json').then(function(r){ if(!r.ok) throw 0; return r.json(); })
+        ]).then(function(a){ VEC = new Int8Array(a[0]); CARDS = a[1]; loaded = true; return true; });
+      }).catch(function(){ loadingP = null; return false; });
+      return loadingP;
+    }
+    function embed(q){
+      return fetch(sfxWorker, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ q: q }) })
+        .then(function(r){ if (!r.ok) throw 0; return r.json(); }).then(function(j){ return j.vector; });
+    }
+    function topK(qv, k){
+      var N = META.n, D = META.dim, s = new Float64Array(N), i, j, d, off;
+      for (i = 0; i < N; i++){ d = 0; off = i * D; for (j = 0; j < D; j++) d += qv[j] * VEC[off + j]; s[i] = d; }
+      var idx = []; for (i = 0; i < N; i++) idx.push(i);
+      idx.sort(function(a, b){ return s[b] - s[a]; });
+      return idx.slice(0, k).map(function(ii){ return META.ids[ii]; });
+    }
+    function hide(){ wrap.classList.add('hidden'); wrap.innerHTML = ''; }
+    function render(ids){
+      var html = '<div class="sfx-head">🧠 Anlamca ilgili sonuçlar <span class="sfx-sub">— kelime birebir tutmasa da anlamı yakın</span></div><div class="sfx-grid">';
+      var shown = 0;
+      for (var n = 0; n < ids.length; n++){
+        var c = CARDS[ids[n]]; if (!c) continue;
+        var badge = DOC[c.dt] || c.dt || '';
+        var date = c.d ? String(c.d).slice(0, 10) : '';
+        html += '<a class="sfx-card" href="' + esc(c.u || '#') + '" target="_blank" rel="noopener noreferrer">'
+          + (badge ? '<span class="sfx-badge">' + esc(badge) + '</span>' : '')
+          + '<div class="sfx-title">' + esc(c.t) + '</div>'
+          + '<div class="sfx-meta">' + esc(c.s || '') + (date ? ' · ' + date : '') + '</div></a>';
+        shown++;
+      }
+      html += '</div>';
+      if (!shown) { hide(); return; }
+      wrap.innerHTML = html;
+      wrap.classList.remove('hidden');
+      if (resultsWrap) resultsWrap.classList.remove('hidden');
+    }
+    function run(){
+      var q = (qEl.value || '').trim();
+      if (q.length < 2) { hide(); return; }
+      var my = ++token;
+      load().then(function(ok){
+        if (!ok || my !== token) return;
+        return embed(q).then(function(qv){
+          if (my !== token || !qv || !qv.length) return;
+          render(topK(qv, 8));
+        });
+      }).catch(function(){ /* silent — keyword search is unaffected */ });
+    }
+    qEl.addEventListener('input', function(){ clearTimeout(debounce); debounce = setTimeout(run, 350); });
+  })();
+</script>
+
+<style is:global>
+  #sfx-wrap { margin-bottom: 1.25rem; padding-bottom: 1.25rem; border-bottom: 1px solid #e2e8f0; }
+  .sfx-head { font-size: 0.75rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.05em; color: #0369a1; margin: 0 0 0.6rem; }
+  .sfx-sub { font-weight: 500; text-transform: none; letter-spacing: 0; color: #94a3b8; }
+  .sfx-grid { display: grid; grid-template-columns: 1fr; gap: 0.75rem; }
+  @media (min-width: 640px) { .sfx-grid { grid-template-columns: repeat(2, 1fr); } }
+  @media (min-width: 1024px) { .sfx-grid { grid-template-columns: repeat(4, 1fr); } }
+  .sfx-card { display: block; background: #fff; border: 1px solid #e2e8f0; border-radius: 0.75rem; padding: 0.85rem; text-decoration: none; transition: border-color .15s, box-shadow .15s, transform .15s; }
+  .sfx-card:hover { border-color: #38bdf8; box-shadow: 0 10px 22px -14px rgba(2,132,199,.5); transform: translateY(-2px); }
+  .sfx-badge { display: inline-block; font-size: 0.6rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; color: #0369a1; background: #f0f9ff; padding: 0.1rem 0.4rem; border-radius: 0.25rem; margin-bottom: 0.35rem; }
+  .sfx-title { font-weight: 600; font-size: 0.9rem; line-height: 1.3; color: #0f172a; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+  .sfx-meta { font-size: 0.7rem; color: #64748b; margin-top: 0.35rem; }
 </style>
