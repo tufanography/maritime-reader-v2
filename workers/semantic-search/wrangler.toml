@@ -31,7 +31,7 @@ simple = { limit = 20, period = 10 }
 [vars]
 # Comma-separated allowlist. Origin is reflected in CORS ONLY if it matches one
 # of these exactly. Do NOT put secrets here.
-ALLOWED_ORIGINS = "https://maritimereader.com,https://www.maritimereader.com,http://localhost:8000"
+ALLOWED_ORIGINS = "https://maritimereader.com,https://www.maritimereader.com"
 
 # --- Route (uncomment + set your zone when deploying) ---
 # Bind to a dedicated subdomain or a path on the site zone. Example:
