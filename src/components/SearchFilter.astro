@@ -1498,34 +1498,49 @@ const docCount = (Math.floor((total || 54000) / 1000) * 1000).toLocaleString('en
       for (var i = 0; i < els.length; i++){ s[els[i].getAttribute('href')] = 1; }
       return s;
     }
-    function render(ids){
+    // render() reads the CURRENT keyword DOM each time, so it must be re-run whenever
+    // the keyword results change (they render async and often AFTER this strip). We
+    // keep the candidate ids and re-render on any keyword mutation (see observer).
+    var lastIds = null, kwObs = null, reT;
+    function render(){
       var mk = window.__sfCard;                 // shared keyword-card renderer
-      if (!mk) { hide(); return; }              // not ready → stay silent, keyword unaffected
+      if (!mk || !lastIds) { hide(); return; }  // not ready → stay silent, keyword unaffected
       var already = shownUrls();
       var html = '', shown = 0;
-      for (var n = 0; n < ids.length; n++){
-        var id = ids[n], c = CARDS[id]; if (!c) continue;
+      for (var n = 0; n < lastIds.length && shown < 8; n++){
+        var id = lastIds[n], c = CARDS[id]; if (!c) continue;
         var detail = '/article/' + id + '/';
         if (already[detail] || (c.u && already[c.u])) continue;   // de-dup vs keyword
         var d = { url: detail, meta: { title: c.t, source: c.s, type: c.dt, date: c.d, link: c.u || detail, image: c.i || null } };
         var frag = ''; try { frag = mk(d, null); } catch (e) { frag = ''; }
         if (frag) { html += frag; shown++; }
-        if (shown >= 8) break;
       }
       if (!shown) { hide(); return; }
       wrap.innerHTML = html;
       wrap.classList.remove('hidden');
       if (resultsWrap) resultsWrap.classList.remove('hidden');
     }
+    // Re-dedup when keyword results settle. Observes ONLY the keyword grids (never
+    // #sfx-wrap, which is a sibling — so our own writes can't retrigger it → no loop).
+    function observeKeyword(){
+      if (kwObs) return;
+      var targets = [];
+      ['#sf-best', '#sf-broader', '#sf-results'].forEach(function(sel){ var el = document.querySelector(sel); if (el) targets.push(el); });
+      if (!targets.length) return;
+      kwObs = new MutationObserver(function(){ clearTimeout(reT); reT = setTimeout(function(){ if (lastIds) render(); }, 120); });
+      targets.forEach(function(el){ kwObs.observe(el, { childList: true, subtree: true }); });
+    }
     function run(){
       var q = (qEl.value || '').trim();
-      if (q.length < 2) { hide(); return; }
+      if (q.length < 2) { lastIds = null; hide(); return; }
       var my = ++token;
       load().then(function(ok){
         if (!ok || my !== token) return;
         return embed(q).then(function(qv){
           if (my !== token || !qv || !qv.length) return;
-          render(topK(qv, 8));
+          lastIds = topK(qv, 24);   // over-fetch so dedup still fills up to 8
+          render();
+          observeKeyword();
         });
       }).catch(function(){ /* silent — keyword search is unaffected */ });
     }
