@@ -1093,6 +1093,7 @@ const docCount = (Math.floor((total || 54000) / 1000) * 1000).toLocaleString('en
           var ids = {}; sres.forEach(function (s) { for (var i = 0; i < s.results.length; i++) ids[s.results[i].id] = 1; });
           var stotal = Object.keys(ids).length;
           countEl.textContent = stotal.toLocaleString('en-US') + ' result' + (stotal === 1 ? '' : 's');
+          countEl.setAttribute('data-kw', String(stotal)); if (window.__sfxCount) window.__sfxCount();
           // GLOBAL toggle at the TOP of the ungrouped list (no "Best matches" heading
           // here) — placed just above the grid. Shown ONLY when the list is a SINGLE
           // stream (lone word / quoted phrase), where relevance is a real, different
@@ -1150,6 +1151,7 @@ const docCount = (Math.floor((total || 54000) / 1000) * 1000).toLocaleString('en
         var brCount = Object.keys(brIds).length;
         var total = bestCount + brCount;
         countEl.textContent = total.toLocaleString('en-US') + ' result' + (total === 1 ? '' : 's');
+        countEl.setAttribute('data-kw', String(total)); if (window.__sfxCount) window.__sfxCount();
 
         // GLOBAL toggle, placed directly below the "Best matches" heading (just above
         // the Best grid) when Best has results; otherwise above the Broader grid (so
@@ -1489,7 +1491,20 @@ const docCount = (Math.floor((total || 54000) / 1000) * 1000).toLocaleString('en
       idx.sort(function(a, b){ return s[b] - s[a]; });
       return idx.slice(0, k).map(function(ii){ return META.ids[ii]; });
     }
-    function hide(){ wrap.classList.add('hidden'); wrap.innerHTML = ''; }
+    // The "N results" badge should count EVERYTHING on screen: keyword total (stashed
+    // as data-kw by the keyword run()) + the semantic cards actually shown. Base always
+    // comes from data-kw so re-renders never double-count (user: just add the number in).
+    var countEl = document.getElementById('sf-count');
+    function updateCount(){
+      if (!countEl) return;
+      var base = parseInt(countEl.getAttribute('data-kw'), 10);
+      if (isNaN(base)) return;                       // keyword hasn't set a base yet → leave it
+      var semShown = (wrap && !wrap.classList.contains('hidden')) ? wrap.querySelectorAll('article.group').length : 0;
+      var tot = base + semShown;
+      countEl.textContent = tot.toLocaleString('en-US') + ' result' + (tot === 1 ? '' : 's');
+    }
+    window.__sfxCount = updateCount;                 // keyword run() calls this after setting data-kw
+    function hide(){ wrap.classList.add('hidden'); wrap.innerHTML = ''; updateCount(); }
     // Collect the URLs the keyword results are already showing (both the publisher
     // link on the image/title and the /article/ "Read →" link) so meaning-based
     // hits that keyword already surfaced are not repeated below.
@@ -1519,6 +1534,7 @@ const docCount = (Math.floor((total || 54000) / 1000) * 1000).toLocaleString('en
       wrap.innerHTML = html;
       wrap.classList.remove('hidden');
       if (resultsWrap) resultsWrap.classList.remove('hidden');
+      updateCount();
     }
     // Re-dedup when keyword results settle. Observes ONLY the keyword grids (never
     // #sfx-wrap, which is a sibling — so our own writes can't retrigger it → no loop).
