@@ -1488,7 +1488,7 @@ const docCount = (Math.floor((total || 54000) / 1000) * 1000).toLocaleString('en
     }
     function hide(){ wrap.classList.add('hidden'); wrap.innerHTML = ''; }
     function render(ids){
-      var html = '<div class="sfx-head">🧠 Related by meaning <span class="sfx-sub">— matches the idea, not just the exact words</span></div><div class="sfx-grid">';
+      var html = '<div class="sfx-head">🧠 Related by meaning <span class="sfx-sub">— matches the topic, not just the exact words</span></div><div class="sfx-grid">';
       var shown = 0;
       for (var n = 0; n < ids.length; n++){
         var c = CARDS[ids[n]]; if (!c) continue;
