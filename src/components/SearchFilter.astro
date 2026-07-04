@@ -380,10 +380,6 @@ const docCount = (Math.floor((total || 54000) / 1000) * 1000).toLocaleString('en
 </script>
 
 <section id="sf-results-wrap" class="max-w-7xl 2xl:max-w-[100rem] mx-auto px-4 py-6 hidden">
-  {/* SEMANTIC (meaning-based) strip — additive + decoupled from Pagefind. Filled by
-      the sfx script at the end of this component from the R2 vector artifact. If it
-      errors it just stays hidden; keyword search is never affected. */}
-  <div id="sfx-wrap" class="hidden"></div>
   <div id="sf-loading" class="hidden text-center py-16">
     <div class="sf-sonar" aria-hidden="true"><span></span><span></span><span></span></div>
     <p class="text-xl font-semibold text-slate-600 tracking-tight mt-5">Searching the archive…</p>
@@ -418,6 +414,10 @@ const docCount = (Math.floor((total || 54000) / 1000) * 1000).toLocaleString('en
     <button id="sf-more" class="hidden px-4 py-2 rounded-lg border border-slate-300 text-sm text-slate-700 hover:border-slate-400">Load more</button>
     <p id="sf-empty" class="hidden p-12 text-sm text-slate-600">No results match your search and filters.</p>
   </div>
+  {/* SEMANTIC (meaning-based) results — additive + decoupled from Pagefind. Rendered
+      by the sfx script BELOW the keyword results, using the SAME card template, with
+      keyword hits de-duplicated out. Errors just stay hidden; keyword search is unaffected. */}
+  <div id="sfx-wrap" class="hidden mt-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4"></div>
 </section>
 
 <script is:inline define:vars={{ base }}>
@@ -685,6 +685,9 @@ const docCount = (Math.floor((total || 54000) / 1000) * 1000).toLocaleString('en
         '</div>' +
       '</article>';
     }
+    // Expose the SAME card renderer to the decoupled semantic strip so meaning-based
+    // results render identically (image, badge, source, date) instead of a mini-card.
+    try { window.__sfCard = card; } catch (e) {}
 
     // Semantic classes — styled in the <style> block (raised/pressable look,
     // fast 70ms transition, hover-lift, pressed-when-active). Kept out of Tailwind
@@ -1487,20 +1490,28 @@ const docCount = (Math.floor((total || 54000) / 1000) * 1000).toLocaleString('en
       return idx.slice(0, k).map(function(ii){ return META.ids[ii]; });
     }
     function hide(){ wrap.classList.add('hidden'); wrap.innerHTML = ''; }
+    // Collect the URLs the keyword results are already showing (both the publisher
+    // link on the image/title and the /article/ "Read →" link) so meaning-based
+    // hits that keyword already surfaced are not repeated below.
+    function shownUrls(){
+      var s = {}, els = document.querySelectorAll('#sf-best a[href], #sf-broader a[href], #sf-results a[href]');
+      for (var i = 0; i < els.length; i++){ s[els[i].getAttribute('href')] = 1; }
+      return s;
+    }
     function render(ids){
-      var html = '<div class="sfx-head">🧠 Related by meaning <span class="sfx-sub">— matches the topic, not just the exact words</span></div><div class="sfx-grid">';
-      var shown = 0;
+      var mk = window.__sfCard;                 // shared keyword-card renderer
+      if (!mk) { hide(); return; }              // not ready → stay silent, keyword unaffected
+      var already = shownUrls();
+      var html = '', shown = 0;
       for (var n = 0; n < ids.length; n++){
-        var c = CARDS[ids[n]]; if (!c) continue;
-        var badge = DOC[c.dt] || c.dt || '';
-        var date = c.d ? String(c.d).slice(0, 10) : '';
-        html += '<a class="sfx-card" href="' + esc(c.u || '#') + '" target="_blank" rel="noopener noreferrer">'
-          + (badge ? '<span class="sfx-badge">' + esc(badge) + '</span>' : '')
-          + '<div class="sfx-title">' + esc(c.t) + '</div>'
-          + '<div class="sfx-meta">' + esc(c.s || '') + (date ? ' · ' + date : '') + '</div></a>';
-        shown++;
+        var id = ids[n], c = CARDS[id]; if (!c) continue;
+        var detail = '/article/' + id + '/';
+        if (already[detail] || (c.u && already[c.u])) continue;   // de-dup vs keyword
+        var d = { url: detail, meta: { title: c.t, source: c.s, type: c.dt, date: c.d, link: c.u || detail, image: c.i || null } };
+        var frag = ''; try { frag = mk(d, null); } catch (e) { frag = ''; }
+        if (frag) { html += frag; shown++; }
+        if (shown >= 8) break;
       }
-      html += '</div>';
       if (!shown) { hide(); return; }
       wrap.innerHTML = html;
       wrap.classList.remove('hidden');
@@ -1523,15 +1534,7 @@ const docCount = (Math.floor((total || 54000) / 1000) * 1000).toLocaleString('en
 </script>
 
 <style is:global>
-  #sfx-wrap { margin-bottom: 1.25rem; padding-bottom: 1.25rem; border-bottom: 1px solid #e2e8f0; }
-  .sfx-head { font-size: 0.75rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.05em; color: #0369a1; margin: 0 0 0.6rem; }
-  .sfx-sub { font-weight: 500; text-transform: none; letter-spacing: 0; color: #94a3b8; }
-  .sfx-grid { display: grid; grid-template-columns: 1fr; gap: 0.75rem; }
-  @media (min-width: 640px) { .sfx-grid { grid-template-columns: repeat(2, 1fr); } }
-  @media (min-width: 1024px) { .sfx-grid { grid-template-columns: repeat(4, 1fr); } }
-  .sfx-card { display: block; background: #fff; border: 1px solid #e2e8f0; border-radius: 0.75rem; padding: 0.85rem; text-decoration: none; transition: border-color .15s, box-shadow .15s, transform .15s; }
-  .sfx-card:hover { border-color: #38bdf8; box-shadow: 0 10px 22px -14px rgba(2,132,199,.5); transform: translateY(-2px); }
-  .sfx-badge { display: inline-block; font-size: 0.6rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; color: #0369a1; background: #f0f9ff; padding: 0.1rem 0.4rem; border-radius: 0.25rem; margin-bottom: 0.35rem; }
-  .sfx-title { font-weight: 600; font-size: 0.9rem; line-height: 1.3; color: #0f172a; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
-  .sfx-meta { font-size: 0.7rem; color: #64748b; margin-top: 0.35rem; }
+  /* Meaning-based results now render through the shared keyword-card template and
+     sit in #sfx-wrap (Tailwind grid) directly below the keyword results — no separate
+     styling. Old .sfx-* mini-card styles removed 2026-07. */
 </style>
