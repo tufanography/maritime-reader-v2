@@ -520,6 +520,7 @@ const docCount = (Math.floor((total || 54000) / 1000) * 1000).toLocaleString('en
     var relKey = null;       // identity (title) of the currently matched panel, or null
     var relSel = new Set();  // related/narrow terms the user has SELECTED to include
     var sortPref = 'date';   // DEFAULT = Newest first (user 2026-06-15). null = relevance (user clicks "Most relevant first")
+    try { window.__sfSort = sortPref; } catch (e) {}   // exposed so the semantic hybrid re-rank knows the mode
 
     // 3-layer maritime search map (Phase A 2026-06-10): loaded at runtime from a
     // static JSON (/maritime-search-map.json) — NOT inlined into the HTML. Matching:
@@ -1178,7 +1179,7 @@ const docCount = (Math.floor((total || 54000) / 1000) * 1000).toLocaleString('en
     if (broaderMore) broaderMore.addEventListener('click', async function () { var tok = pending; await renderGroup(curBroader, broaderEl, broaderMore, tok); });
     // GLOBAL sort toggle: clicking the track flips; clicking a label selects that
     // side. Drives sortPref for the WHOLE result set (Best + Broader + single list).
-    function setSort(pref) { if (sortPref !== pref) { sortPref = pref; syncSortToggle(); run(); } }
+    function setSort(pref) { if (sortPref !== pref) { sortPref = pref; try { window.__sfSort = pref; } catch (e) {} syncSortToggle(); run(); } }
     if (sortTrack) sortTrack.addEventListener('click', function () { setSort(sortPref === 'date' ? null : 'date'); });
     if (sortRelLbl) sortRelLbl.addEventListener('click', function () { setSort(null); });
     if (sortDateLbl) sortDateLbl.addEventListener('click', function () { setSort('date'); });
@@ -1190,7 +1191,7 @@ const docCount = (Math.floor((total || 54000) / 1000) * 1000).toLocaleString('en
     });
     qEl.addEventListener('input', function () {
       sel.q = qEl.value.trim();
-      sortPref = 'date'; // a new/edited query defaults back to Newest first (user 2026-06-15)
+      sortPref = 'date'; try { window.__sfSort = sortPref; } catch (e) {} // default Newest (safe); the hybrid recency re-rank is opt-in via "Most relevant" until boilerplate cleanup (#7) + tuning enable a default flip
       syncQClear();
       clearTimeout(debounce);
       // Short queries match a huge slice of the 51k index — heavy + useless, and
@@ -1466,6 +1467,7 @@ const docCount = (Math.floor((total || 54000) / 1000) * 1000).toLocaleString('en
     var resultsWrap = document.getElementById('sf-results-wrap');
     if (!qEl || !wrap) return;
     var VEC = null, META = null, CARDS = null, loaded = false, loadingP = null, token = 0, debounce;
+    var lastQv = null, idIndex = null;   // current query vector + id→row map (for hybrid re-rank)
     var DOC = { news:'News', press_release:'Press', pi_circular:'P&I', class_notice:'Class', regulation:'Regulation', market_report:'Market', casualty_report:'Casualty', psc_report:'PSC' };
     function esc(s){ return (s == null ? '' : String(s)).replace(/[&<>"]/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
     function load(){
@@ -1516,35 +1518,84 @@ const docCount = (Math.floor((total || 54000) / 1000) * 1000).toLocaleString('en
     // render() reads the CURRENT keyword DOM each time, so it must be re-run whenever
     // the keyword results change (they render async and often AFTER this strip). We
     // keep the candidate ids and re-render on any keyword mutation (see observer).
+    // --- Hybrid-ranking helpers (#1/#2, 2026-07) ---------------------------------
+    // score any article by semantic similarity to the CURRENT query + a gentle
+    // recency weight (rules/regs decay faster: an outdated rule misleads more than
+    // outdated news). semSim ≈ 350×cosine (the int8 scale); higher = closer.
+    function buildIndex(){ if (idIndex || !META) return; idIndex = {}; for (var i = 0; i < META.n; i++) idIndex[META.ids[i]] = i; }
+    function semSim(id){
+      if (!lastQv || !VEC || !META) return 0;
+      buildIndex(); var i = idIndex ? idIndex[id] : undefined; if (i === undefined) return -1;
+      var off = i * META.dim, d = 0, j; for (j = 0; j < META.dim; j++) d += lastQv[j] * VEC[off + j]; return d;
+    }
+    var RULE = { regulation: 1, pi_circular: 1, class_notice: 1 };
+    function recency(dateStr, dt){
+      var floor = RULE[dt] ? 0.45 : 0.6;
+      var t = Date.parse(dateStr || '');
+      if (isNaN(t)) return floor + (1 - floor) * 0.5;
+      var age = (Date.now() - t) / 86400000; if (age < 0) age = 0;
+      return floor + (1 - floor) * Math.exp(-age / 540);   // ~1.5yr soft decay
+    }
+    function idFromArticle(el){
+      var as = el.querySelectorAll('a[href]');
+      for (var k = 0; k < as.length; k++){ var m = (as[k].getAttribute('href') || '').match(/\/article\/([^\/]+)\//); if (m) return m[1]; }
+      return null;
+    }
+
     var lastIds = null, kwObs = null, reT;
+    function attachObs(){ ['#sf-best', '#sf-broader', '#sf-results'].forEach(function(sel){ var el = document.querySelector(sel); if (el && kwObs) kwObs.observe(el, { childList: true, subtree: true }); }); }
+    function observeKeyword(){
+      if (kwObs) return;
+      if (!document.querySelector('#sf-best, #sf-broader, #sf-results')) return;
+      kwObs = new MutationObserver(function(){ clearTimeout(reT); reT = setTimeout(function(){ if (lastIds) render(); }, 120); });
+      attachObs();
+    }
+    // #1: recency-weighted HYBRID re-rank of the keyword cards — reorder each grid by
+    // RRF(keywordRank, semanticRank) × recency so the first screen is "most relevant +
+    // recent". ONLY in relevance mode (Newest is left chronological). Disconnects the
+    // observer around its own DOM writes so the reorder can't retrigger a render loop.
+    function reRankOne(cont){
+      var arts = [].slice.call(cont.querySelectorAll(':scope > article.group'));
+      if (arts.length < 2) return;
+      var sc = arts.map(function(el, i){ var id = idFromArticle(el); var c = id ? CARDS[id] : null; return { el: el, kwRank: i, sim: id ? semSim(id) : -1, rec: c ? recency(c.d, c.dt) : 0.6 }; });
+      var bySim = sc.slice().sort(function(a, b){ return b.sim - a.sim; }); bySim.forEach(function(o, r){ o.sr = r; });
+      sc.forEach(function(o){ o.score = (1 / (60 + o.kwRank) + 1 / (60 + o.sr)) * o.rec; });
+      sc.sort(function(a, b){ return b.score - a.score; });
+      sc.forEach(function(o){ cont.appendChild(o.el); });
+    }
+    function reRankKeyword(){
+      if (window.__sfSort === 'date' || !lastQv || !CARDS) return;   // Newest → respect chronological
+      var conts = []; ['#sf-results', '#sf-broader', '#sf-best'].forEach(function(s){ var el = document.querySelector(s); if (el) conts.push(el); });
+      if (!conts.length) return;
+      var had = !!kwObs; if (had) kwObs.disconnect();
+      try { conts.forEach(reRankOne); } catch (e) {}
+      if (had) attachObs();
+    }
     function render(){
-      var mk = window.__sfCard;                 // shared keyword-card renderer
-      if (!mk || !lastIds) { hide(); return; }  // not ready → stay silent, keyword unaffected
-      var already = shownUrls();
-      var html = '', shown = 0;
-      for (var n = 0; n < lastIds.length && shown < 8; n++){
-        var id = lastIds[n], c = CARDS[id]; if (!c) continue;
-        var detail = '/article/' + id + '/';
-        if (already[detail] || (c.u && already[c.u])) continue;   // de-dup vs keyword
-        var d = { url: detail, meta: { title: c.t, source: c.s, type: c.dt, date: c.d, link: c.u || detail, image: c.i || null } };
+      var mk = window.__sfCard;
+      if (!mk || !lastIds) { hide(); reRankKeyword(); return; }
+      // #2: keep only candidates that are genuinely close (abs + relative floor), then
+      // order the strip by similarity × recency (fresher meaning-matches first).
+      var cand = [], i, o, mx = 0;
+      for (i = 0; i < lastIds.length; i++){ var c = CARDS[lastIds[i]]; if (!c) continue; var sm = semSim(lastIds[i]); if (sm > mx) mx = sm; cand.push({ id: lastIds[i], c: c, sim: sm }); }
+      var floor = Math.max(90, 0.5 * mx);
+      cand = cand.filter(function(x){ return x.sim >= floor; });
+      cand.forEach(function(x){ x.score = x.sim * recency(x.c.d, x.c.dt); });
+      cand.sort(function(a, b){ return b.score - a.score; });
+      var already = shownUrls(), html = '', shown = 0;
+      for (i = 0; i < cand.length && shown < 8; i++){
+        o = cand[i]; var detail = '/article/' + o.id + '/';
+        if (already[detail] || (o.c.u && already[o.c.u])) continue;
+        var d = { url: detail, meta: { title: o.c.t, source: o.c.s, type: o.c.dt, date: o.c.d, link: o.c.u || detail, image: o.c.i || null } };
         var frag = ''; try { frag = mk(d, null); } catch (e) { frag = ''; }
         if (frag) { html += frag; shown++; }
       }
-      if (!shown) { hide(); return; }
+      if (!shown) { hide(); reRankKeyword(); return; }
       wrap.innerHTML = html;
       wrap.classList.remove('hidden');
       if (resultsWrap) resultsWrap.classList.remove('hidden');
       updateCount();
-    }
-    // Re-dedup when keyword results settle. Observes ONLY the keyword grids (never
-    // #sfx-wrap, which is a sibling — so our own writes can't retrigger it → no loop).
-    function observeKeyword(){
-      if (kwObs) return;
-      var targets = [];
-      ['#sf-best', '#sf-broader', '#sf-results'].forEach(function(sel){ var el = document.querySelector(sel); if (el) targets.push(el); });
-      if (!targets.length) return;
-      kwObs = new MutationObserver(function(){ clearTimeout(reT); reT = setTimeout(function(){ if (lastIds) render(); }, 120); });
-      targets.forEach(function(el){ kwObs.observe(el, { childList: true, subtree: true }); });
+      reRankKeyword();
     }
     function run(){
       var q = (qEl.value || '').trim();
@@ -1554,9 +1605,10 @@ const docCount = (Math.floor((total || 54000) / 1000) * 1000).toLocaleString('en
         if (!ok || my !== token) return;
         return embed(q).then(function(qv){
           if (my !== token || !qv || !qv.length) return;
-          lastIds = topK(qv, 24);   // over-fetch so dedup still fills up to 8
-          render();
+          lastQv = qv;                       // for hybrid re-rank + strip scoring
+          lastIds = topK(qv, 24);
           observeKeyword();
+          render();
         });
       }).catch(function(){ /* silent — keyword search is unaffected */ });
     }
