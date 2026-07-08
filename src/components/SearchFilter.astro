@@ -662,8 +662,15 @@ const docCount = (Math.floor((total || 54000) / 1000) * 1000).toLocaleString('en
         ? '<img src="' + esc(img) + '" alt="" loading="lazy" referrerpolicy="no-referrer" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300">'
         : '';
       var gaId = (url || '').replace(/^\/article\/|\/$/g, '');   // /article/<id>/ → <id> for GA card_click
+      // GA card_click segment/theme — the display LABEL (e.g. "Container", "LNG / LPG"),
+      // matching the homepage card, so GA aggregates the same segment/theme into ONE row.
+      // Pagefind indexes these filters AS the label (article/[id].astro uses SEGMENT_LABEL),
+      // so f.segment[0] already IS the label — no slug↔label mapping needed. f.segment/
+      // f.theme are in every result's data(), indexed as filters just like source/type.
+      var gaSeg = (f.segment && f.segment[0]) || '';
+      var gaTheme = (f.theme && f.theme[0]) || '';
       return '' +
-      '<article data-ga-id="' + esc(gaId) + '" data-ga-source="' + esc(source || '') + '" class="group flex flex-col rounded-lg border border-slate-200 hover:border-sky-400 transition bg-white">' +
+      '<article data-ga-id="' + esc(gaId) + '" data-ga-source="' + esc(source || '') + '" data-ga-seg="' + esc(gaSeg) + '" data-ga-theme="' + esc(gaTheme) + '" class="group flex flex-col rounded-lg border border-slate-200 hover:border-sky-400 transition bg-white">' +
         '<a href="' + esc(pub) + '" target="_blank" rel="noopener noreferrer" class="block aspect-video bg-slate-100 overflow-hidden relative rounded-t-lg" style="' + grad + '">' +
           imgPart +
           '<div class="absolute inset-0 bg-white/10 pointer-events-none" style="backdrop-filter:blur(2.2px);-webkit-backdrop-filter:blur(2.2px);"></div>' +
@@ -1177,19 +1184,25 @@ const docCount = (Math.floor((total || 54000) / 1000) * 1000).toLocaleString('en
     function gaFire(name, params){ try { if (window.gtag) gtag('event', name, params); } catch (e) {} }
     // search_query: ONE event per SETTLED query (debounced 1.3s), with a deferred outcome —
     // zero_result (0 hits) · click (a result card was clicked) · abandon (new search / leave).
-    var gaS = null, gaST, gaMorePage = 1;
+    var gaS = null, gaST, gaMorePage = 1, gaTries = 0;
     function gaAbandon(){ if (gaS && !gaS.done){ gaFire('search_query', { query_text: gaS.q, result_count: gaS.n, search_type: 'hybrid', outcome: 'abandon' }); gaS.done = true; gaS = null; } }
     window.__sfClicked = function(){ if (gaS && !gaS.done){ gaFire('search_query', { query_text: gaS.q, result_count: gaS.n, search_type: 'hybrid', outcome: 'click', time_to_action: Date.now() - gaS.ts }); gaS.done = true; gaS = null; } };
     function gaSearch(){
       var q = (qEl.value || '').trim();
       if (q.length < 2){ gaAbandon(); return; }
       var cEl = document.getElementById('sf-count');
-      var n = parseInt(((cEl && cEl.textContent) || '').replace(/[^0-9]/g, ''), 10) || 0;
+      // Wait for the keyword run to SETTLE (data-kw stamped) before judging outcome.
+      // On a cold artifact load the count is empty at typing+1.3s — reading it then
+      // would fire a FALSE zero_result (and never correct), polluting the zero-rate.
+      var kw = cEl ? cEl.getAttribute('data-kw') : null;
+      if (kw == null && gaTries < 8){ gaTries++; clearTimeout(gaST); gaST = setTimeout(gaSearch, 600); return; }
+      gaTries = 0;
+      var n = parseInt((kw != null ? kw : ((cEl && cEl.textContent) || '')).replace(/[^0-9]/g, ''), 10) || 0;
       gaAbandon();                                       // resolve the previous query as abandon
       if (n === 0){ gaFire('search_query', { query_text: q, result_count: 0, search_type: 'hybrid', outcome: 'zero_result' }); gaS = null; return; }
       gaS = { q: q, n: n, ts: Date.now(), done: false }; // hold open for click/abandon
     }
-    qEl.addEventListener('input', function(){ clearTimeout(gaST); gaMorePage = 1; gaST = setTimeout(gaSearch, 1300); });
+    qEl.addEventListener('input', function(){ clearTimeout(gaST); gaMorePage = 1; gaTries = 0; gaST = setTimeout(gaSearch, 1300); });
     window.addEventListener('beforeunload', gaAbandon);
     function gaMore(){ gaMorePage += 1; gaFire('load_more', { page_number: gaMorePage, context: (sel.q ? 'search' : 'home'), sort_mode: (sortPref === 'date' ? 'newest' : 'relevant') }); }
 

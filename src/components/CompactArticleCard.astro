@@ -62,7 +62,10 @@ const sourceHref = a.url ?? detailHref;
 
 // GA4 card_click params: expose id/source/segment/theme on the <article> so the
 // delegated click listener (Base layout) can report them. Feed cards carry the
-// full taxonomy; the first known segment/theme label is used.
+// full taxonomy; the first known segment/theme is emitted as its display LABEL
+// (e.g. "Container", "LNG / LPG") — the SAME value the search-result card gets
+// from Pagefind (its filter is indexed as SEGMENT_LABEL, see article/[id].astro),
+// so GA aggregates the same segment/theme into ONE row across home + search.
 const gaSeg = a.segments.find((s) => segSet.has(s));
 const gaTheme = a.themes.find((t) => themeSet.has(t));
 const gaSegLabel = gaSeg ? SEGMENT_LABEL[gaSeg as Segment] : '';
