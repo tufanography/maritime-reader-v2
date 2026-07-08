@@ -401,17 +401,17 @@ const docCount = (Math.floor((total || 54000) / 1000) * 1000).toLocaleString('en
   <div id="sf-best-wrap" class="hidden">
     <h3 class="sf-group-label">Best matches <span class="sf-group-sub">Closest matches to your search</span></h3>
     <div id="sf-best" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4"></div>
-    <div class="mt-4 mb-8 text-center"><button id="sf-best-more" class="hidden px-4 py-2 rounded-lg border border-slate-300 text-sm text-slate-700 hover:border-slate-400">Load more</button></div>
+    <div class="mt-4 mb-8 text-center"><button id="sf-best-more" class="hidden inline-flex items-center justify-center px-10 py-3 rounded-lg bg-sky-900 text-white text-base font-bold shadow-md hover:bg-sky-800 transition">Load more ↓</button></div>
   </div>
   <div id="sf-broader-wrap" class="hidden">
     <h3 class="sf-group-label">Broader matches <span class="sf-group-sub">Your words appear, but maybe not together — less focused</span></h3>
     <div id="sf-broader" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4"></div>
-    <div class="mt-4 text-center"><button id="sf-broader-more" class="hidden px-4 py-2 rounded-lg border border-slate-300 text-sm text-slate-700 hover:border-slate-400">Load more</button></div>
+    <div class="mt-4 text-center"><button id="sf-broader-more" class="hidden inline-flex items-center justify-center px-10 py-3 rounded-lg bg-sky-900 text-white text-base font-bold shadow-md hover:bg-sky-800 transition">Load more ↓</button></div>
   </div>
   {/* Ungrouped results (single-word / quoted queries) */}
   <div id="sf-results" class="hidden grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4"></div>
   <div class="mt-6 text-center">
-    <button id="sf-more" class="hidden px-4 py-2 rounded-lg border border-slate-300 text-sm text-slate-700 hover:border-slate-400">Load more</button>
+    <button id="sf-more" class="hidden inline-flex items-center justify-center px-10 py-3 rounded-lg bg-sky-900 text-white text-base font-bold shadow-md hover:bg-sky-800 transition">Load more ↓</button>
     <p id="sf-empty" class="hidden p-12 text-sm text-slate-600">No results match your search and filters.</p>
   </div>
   {/* SEMANTIC (meaning-based) results — additive + decoupled from Pagefind. Rendered
@@ -1572,6 +1572,10 @@ const docCount = (Math.floor((total || 54000) / 1000) * 1000).toLocaleString('en
       if (had) attachObs();
     }
     function render(){
+      // If the query was cleared (e.g. "Clear all" / ✕, which don't fire our input
+      // listener), an observer-triggered render must NOT re-show anything or un-hide
+      // the results wrap — otherwise the page won't return to the static feed.
+      if (((qEl.value || '').trim()).length < 2) { lastIds = null; hide(); reRankKeyword(); return; }
       var mk = window.__sfCard;
       if (!mk || !lastIds) { hide(); reRankKeyword(); return; }
       // #2: keep only candidates that are genuinely close (abs + relative floor), then
