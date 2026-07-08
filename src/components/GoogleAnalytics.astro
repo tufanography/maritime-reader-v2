@@ -12,3 +12,36 @@
   gtag('js', new Date());
   gtag('config', 'G-19NLVCLLXN');
 </script>
+<script is:inline>
+  // GA4 card_click — ONE delegated listener for every article card (homepage feed,
+  // search results, related-knowledge). Cards carry data-ga-id/source/seg/theme;
+  // context/kind/position are derived here. Fires just before the card navigates.
+  (function () {
+    document.addEventListener('click', function (e) {
+      var a = e.target && e.target.closest ? e.target.closest('a[href]') : null;
+      if (!a) return;
+      var art = a.closest ? a.closest('article[data-ga-id]') : null;
+      if (!art) return;
+      var id = art.getAttribute('data-ga-id'); if (!id) return;
+      var ctx = art.closest('#static-feed') ? 'home' : (art.closest('#sf-results, #sf-best, #sf-broader') ? 'search' : 'topic');
+      var kind = art.hasAttribute('data-sfx') ? 'semantic' : (ctx === 'search' ? 'keyword' : 'feed');
+      var cont = art.parentNode;
+      var sibs = cont ? [].slice.call(cont.querySelectorAll(':scope > article[data-ga-id]')) : [art];
+      var pos = sibs.indexOf(art) + 1;
+      var sort = (window.__sfSort === 'date') ? 'newest' : 'relevant';   // relevance mode is sortPref=null
+      try {
+        gtag('event', 'card_click', {
+          article_id: id,
+          source_name: art.getAttribute('data-ga-source') || '',
+          segment: art.getAttribute('data-ga-seg') || '',
+          theme: art.getAttribute('data-ga-theme') || '',
+          result_kind: kind,
+          position: pos,
+          sort_mode: sort,
+          page_context: ctx
+        });
+      } catch (err) {}
+      if (ctx === 'search' && typeof window.__sfClicked === 'function') { try { window.__sfClicked(); } catch (err) {} }
+    }, true);
+  })();
+</script>

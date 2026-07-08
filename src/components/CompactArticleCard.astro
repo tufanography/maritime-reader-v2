@@ -60,6 +60,14 @@ const moreTags = cardTags.length - shownTags.length;
 // back to the in-site detail page if an article has no source URL.
 const sourceHref = a.url ?? detailHref;
 
+// GA4 card_click params: expose id/source/segment/theme on the <article> so the
+// delegated click listener (Base layout) can report them. Feed cards carry the
+// full taxonomy; the first known segment/theme label is used.
+const gaSeg = a.segments.find((s) => segSet.has(s));
+const gaTheme = a.themes.find((t) => themeSet.has(t));
+const gaSegLabel = gaSeg ? SEGMENT_LABEL[gaSeg as Segment] : '';
+const gaThemeLabel = gaTheme ? THEME_LABEL[gaTheme as Theme] : '';
+
 // Doc-type badge label set. Mirrors v1 DOCUMENT_TYPE_LABELS.
 const DOC_TYPE_LABEL: Record<string, string> = {
   news:            'News',
@@ -95,7 +103,7 @@ const gradientStyle = !a.imageUrl
   ? `background: linear-gradient(135deg, ${accent}33, ${accent}10);`
   : '';
 ---
-<article class="group flex flex-col rounded-lg border border-slate-200 hover:border-sky-400 transition bg-white">
+<article data-ga-id={a.id} data-ga-source={a.sourceName ?? ''} data-ga-seg={gaSegLabel} data-ga-theme={gaThemeLabel} class="group flex flex-col rounded-lg border border-slate-200 hover:border-sky-400 transition bg-white">
   <a
     href={sourceHref}
     target="_blank"

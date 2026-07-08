@@ -661,8 +661,9 @@ const docCount = (Math.floor((total || 54000) / 1000) * 1000).toLocaleString('en
       var imgPart = img
         ? '<img src="' + esc(img) + '" alt="" loading="lazy" referrerpolicy="no-referrer" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300">'
         : '';
+      var gaId = (url || '').replace(/^\/article\/|\/$/g, '');   // /article/<id>/ → <id> for GA card_click
       return '' +
-      '<article class="group flex flex-col rounded-lg border border-slate-200 hover:border-sky-400 transition bg-white">' +
+      '<article data-ga-id="' + esc(gaId) + '" data-ga-source="' + esc(source || '') + '" class="group flex flex-col rounded-lg border border-slate-200 hover:border-sky-400 transition bg-white">' +
         '<a href="' + esc(pub) + '" target="_blank" rel="noopener noreferrer" class="block aspect-video bg-slate-100 overflow-hidden relative rounded-t-lg" style="' + grad + '">' +
           imgPart +
           '<div class="absolute inset-0 bg-white/10 pointer-events-none" style="backdrop-filter:blur(2.2px);-webkit-backdrop-filter:blur(2.2px);"></div>' +
@@ -1172,14 +1173,34 @@ const docCount = (Math.floor((total || 54000) / 1000) * 1000).toLocaleString('en
       } catch (e) { if (loadEl) loadEl.classList.add('hidden'); }
     }
 
+    // ===== GA4 analytics (search_query · sort_change · load_more) — see the GA4 plan =====
+    function gaFire(name, params){ try { if (window.gtag) gtag('event', name, params); } catch (e) {} }
+    // search_query: ONE event per SETTLED query (debounced 1.3s), with a deferred outcome —
+    // zero_result (0 hits) · click (a result card was clicked) · abandon (new search / leave).
+    var gaS = null, gaST, gaMorePage = 1;
+    function gaAbandon(){ if (gaS && !gaS.done){ gaFire('search_query', { query_text: gaS.q, result_count: gaS.n, search_type: 'hybrid', outcome: 'abandon' }); gaS.done = true; gaS = null; } }
+    window.__sfClicked = function(){ if (gaS && !gaS.done){ gaFire('search_query', { query_text: gaS.q, result_count: gaS.n, search_type: 'hybrid', outcome: 'click', time_to_action: Date.now() - gaS.ts }); gaS.done = true; gaS = null; } };
+    function gaSearch(){
+      var q = (qEl.value || '').trim();
+      if (q.length < 2){ gaAbandon(); return; }
+      var cEl = document.getElementById('sf-count');
+      var n = parseInt(((cEl && cEl.textContent) || '').replace(/[^0-9]/g, ''), 10) || 0;
+      gaAbandon();                                       // resolve the previous query as abandon
+      if (n === 0){ gaFire('search_query', { query_text: q, result_count: 0, search_type: 'hybrid', outcome: 'zero_result' }); gaS = null; return; }
+      gaS = { q: q, n: n, ts: Date.now(), done: false }; // hold open for click/abandon
+    }
+    qEl.addEventListener('input', function(){ clearTimeout(gaST); gaMorePage = 1; gaST = setTimeout(gaSearch, 1300); });
+    window.addEventListener('beforeunload', gaAbandon);
+    function gaMore(){ gaMorePage += 1; gaFire('load_more', { page_number: gaMorePage, context: (sel.q ? 'search' : 'home'), sort_mode: (sortPref === 'date' ? 'newest' : 'relevant') }); }
+
     // Load-more: capture the live search token now; if a new search supersedes this
     // group mid-fetch (pending bumped + containers cleared), renderGroup drops the append.
-    moreBtn.addEventListener('click', async function () { var tok = pending; await renderGroup(curSingle, resultsEl, moreBtn, tok); });
-    if (bestMore) bestMore.addEventListener('click', async function () { var tok = pending; await renderGroup(curBest, bestEl, bestMore, tok); });
-    if (broaderMore) broaderMore.addEventListener('click', async function () { var tok = pending; await renderGroup(curBroader, broaderEl, broaderMore, tok); });
+    moreBtn.addEventListener('click', async function () { gaMore(); var tok = pending; await renderGroup(curSingle, resultsEl, moreBtn, tok); });
+    if (bestMore) bestMore.addEventListener('click', async function () { gaMore(); var tok = pending; await renderGroup(curBest, bestEl, bestMore, tok); });
+    if (broaderMore) broaderMore.addEventListener('click', async function () { gaMore(); var tok = pending; await renderGroup(curBroader, broaderEl, broaderMore, tok); });
     // GLOBAL sort toggle: clicking the track flips; clicking a label selects that
     // side. Drives sortPref for the WHOLE result set (Best + Broader + single list).
-    function setSort(pref) { if (sortPref !== pref) { sortPref = pref; try { window.__sfSort = pref; } catch (e) {} syncSortToggle(); run(); } }
+    function setSort(pref) { if (sortPref !== pref) { var gaFrom = sortPref === 'date' ? 'newest' : 'relevant'; sortPref = pref; try { window.__sfSort = pref; } catch (e) {} gaFire('sort_change', { from_mode: gaFrom, to_mode: pref === 'date' ? 'newest' : 'relevant', context: (sel.q ? 'search' : 'home') }); syncSortToggle(); run(); } }
     if (sortTrack) sortTrack.addEventListener('click', function () { setSort(sortPref === 'date' ? null : 'date'); });
     if (sortRelLbl) sortRelLbl.addEventListener('click', function () { setSort(null); });
     if (sortDateLbl) sortDateLbl.addEventListener('click', function () { setSort('date'); });
