@@ -1351,6 +1351,16 @@ const docCount = (Math.floor((total || 54000) / 1000) * 1000).toLocaleString('en
   #sf-q::-webkit-search-cancel-button { -webkit-appearance: none; appearance: none; }
   #sf-q::-webkit-search-decoration { -webkit-appearance: none; appearance: none; }
 
+  /* The three Load-more buttons and #sf-results carry BOTH `hidden` and a display
+     utility (`inline-flex` / `grid`) in their class. The JS show/hide toggles ONLY
+     `hidden`, but Tailwind's `.hidden` (display:none) LOSES to `.inline-flex`/`.grid`
+     on CSS source order — so `hidden` never actually hid them (they stayed visible,
+     stacking dead Load-more buttons under Best/Broader; found 2026-07-08). Force
+     `hidden` to win for exactly these ids — no responsive display is used on them,
+     so `!important` is safe here (a GLOBAL `.hidden{!important}` would break the
+     facet toggle's `hidden md:block`). Their flex/grid layout still applies when shown. */
+  #sf-best-more.hidden, #sf-broader-more.hidden, #sf-more.hidden, #sf-results.hidden { display: none !important; }
+
   /* Sonar-ping loading animation (CSS-only, maritime theme, sky palette).
      3 staggered expanding rings + a solid center dot. When #sf-loading gets the
      `hidden` class (display:none) the whole subtree — animation included — is
