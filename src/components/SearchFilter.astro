@@ -868,17 +868,21 @@ const docCount = (Math.floor((total || 54000) / 1000) * 1000).toLocaleString('en
     // pullGroup's resolveHeads then finds it already resolved). Fire-and-forget: a
     // slow/failed warm just falls back to the click-time 8s fetch for that card.
     function prefetchNext(g, n) {
-      if (!g) return;
-      var total = 0, CAP = 48;
+      if (!g) return Promise.resolve();
+      var jobs = [], total = 0, CAP = 48;
       g.tiers.forEach(function (tier) {
         tier.forEach(function (s) {
           var warmed = 0;
           for (var k = s.idx; k < s.results.length && warmed < n && total < CAP; k++) {
             var r = s.results[k];
-            if (r && !r.__data && typeof r.data === 'function') { warmed++; total++; r.data().then(function (d) { r.__data = d; }, function () {}); }
+            if (r && !r.__data && typeof r.data === 'function') {
+              warmed++; total++;
+              jobs.push(withTimeout(r.data().then(function (d) { r.__data = d; }), 8000));
+            }
           }
         });
       });
+      return jobs.length ? Promise.all(jobs) : Promise.resolve();  // awaitable: warm a page in PARALLEL
     }
     function dateOf(r) {
       var d = r && r.__data && r.__data.meta ? r.__data.meta.date : null;
@@ -928,6 +932,11 @@ const docCount = (Math.floor((total || 54000) / 1000) * 1000).toLocaleString('en
     // Re-check `pending === tok` AFTER the await, immediately before the DOM append.
     async function renderGroup(g, containerEl, moreBtn, tok) {
       if (!g) return 0;
+      // Warm THIS page's fragments in PARALLEL before the sequential pullGroup, so the
+      // date-merge finds every head cached instead of fetching 20 fragments one-by-one
+      // (a cold source-filter browse blocked ~10s on the INITIAL render — user 2026-07-09).
+      await prefetchNext(g, PAGE);
+      if (tok !== undefined && pending !== tok) return 0;
       var batch = await pullGroup(g, PAGE);   // only PAGE cards reach the DOM per call
       if (tok !== undefined && pending !== tok) return 0; // superseded by a newer search → drop this append
       var html = '';
