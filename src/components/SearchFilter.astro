@@ -401,17 +401,17 @@ const docCount = (Math.floor((total || 54000) / 1000) * 1000).toLocaleString('en
   <div id="sf-best-wrap" class="hidden">
     <h3 class="sf-group-label">Best matches <span class="sf-group-sub">Closest matches to your search</span></h3>
     <div id="sf-best" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4"></div>
-    <div class="mt-4 mb-8 text-center"><button id="sf-best-more" class="hidden inline-flex items-center justify-center px-10 py-3 rounded-lg bg-sky-900 text-white text-base font-bold shadow-md hover:bg-sky-800 transition">Load more ↓</button></div>
+    <div class="mt-4 mb-8 text-center"><button id="sf-best-more" class="hidden inline-flex items-center justify-center px-10 py-3 rounded-lg bg-sky-900 text-white text-base font-bold shadow-md hover:bg-sky-800 active:translate-y-px active:bg-sky-950 disabled:opacity-70 disabled:cursor-wait transition">Load more ↓</button></div>
   </div>
   <div id="sf-broader-wrap" class="hidden">
     <h3 class="sf-group-label">Broader matches <span class="sf-group-sub">Your words appear, but maybe not together — less focused</span></h3>
     <div id="sf-broader" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4"></div>
-    <div class="mt-4 text-center"><button id="sf-broader-more" class="hidden inline-flex items-center justify-center px-10 py-3 rounded-lg bg-sky-900 text-white text-base font-bold shadow-md hover:bg-sky-800 transition">Load more ↓</button></div>
+    <div class="mt-4 text-center"><button id="sf-broader-more" class="hidden inline-flex items-center justify-center px-10 py-3 rounded-lg bg-sky-900 text-white text-base font-bold shadow-md hover:bg-sky-800 active:translate-y-px active:bg-sky-950 disabled:opacity-70 disabled:cursor-wait transition">Load more ↓</button></div>
   </div>
   {/* Ungrouped results (single-word / quoted queries) */}
   <div id="sf-results" class="hidden grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4"></div>
   <div class="mt-6 text-center">
-    <button id="sf-more" class="hidden inline-flex items-center justify-center px-10 py-3 rounded-lg bg-sky-900 text-white text-base font-bold shadow-md hover:bg-sky-800 transition">Load more ↓</button>
+    <button id="sf-more" class="hidden inline-flex items-center justify-center px-10 py-3 rounded-lg bg-sky-900 text-white text-base font-bold shadow-md hover:bg-sky-800 active:translate-y-px active:bg-sky-950 disabled:opacity-70 disabled:cursor-wait transition">Load more ↓</button>
     <p id="sf-empty" class="hidden p-12 text-sm text-slate-600">No results match your search and filters.</p>
   </div>
   {/* SEMANTIC (meaning-based) results — additive + decoupled from Pagefind. Rendered
@@ -862,6 +862,24 @@ const docCount = (Math.floor((total || 54000) / 1000) * 1000).toLocaleString('en
       });
       return jobs.length ? Promise.all(jobs) : Promise.resolve();
     }
+    // Warm the NEXT page's data() in the background right after a page renders, so
+    // the following Load-more appends INSTANTLY instead of blocking ~10s on 20
+    // sequential fragment fetches (Pagefind memoizes each fragment on r.__data, and
+    // pullGroup's resolveHeads then finds it already resolved). Fire-and-forget: a
+    // slow/failed warm just falls back to the click-time 8s fetch for that card.
+    function prefetchNext(g, n) {
+      if (!g) return;
+      var total = 0, CAP = 48;
+      g.tiers.forEach(function (tier) {
+        tier.forEach(function (s) {
+          var warmed = 0;
+          for (var k = s.idx; k < s.results.length && warmed < n && total < CAP; k++) {
+            var r = s.results[k];
+            if (r && !r.__data && typeof r.data === 'function') { warmed++; total++; r.data().then(function (d) { r.__data = d; }, function () {}); }
+          }
+        });
+      });
+    }
     function dateOf(r) {
       var d = r && r.__data && r.__data.meta ? r.__data.meta.date : null;
       var t = d ? new Date(d).getTime() : NaN;
@@ -916,6 +934,7 @@ const docCount = (Math.floor((total || 54000) / 1000) * 1000).toLocaleString('en
       for (var i = 0; i < batch.length; i++) html += card(batch[i].__data, matchedFor(batch[i].id));
       containerEl.insertAdjacentHTML('beforeend', html);
       if (moreBtn) moreBtn.classList.toggle('hidden', !groupHasMore(g)); // hide if nothing left
+      prefetchNext(g, PAGE); // warm the next page so the next Load-more appends instantly
       return batch.length;
     }
     // Related-terms checkbox panel for the matched key. All ON by default; toggling
@@ -1208,9 +1227,22 @@ const docCount = (Math.floor((total || 54000) / 1000) * 1000).toLocaleString('en
 
     // Load-more: capture the live search token now; if a new search supersedes this
     // group mid-fetch (pending bumped + containers cleared), renderGroup drops the append.
-    moreBtn.addEventListener('click', async function () { gaMore(); var tok = pending; await renderGroup(curSingle, resultsEl, moreBtn, tok); });
-    if (bestMore) bestMore.addEventListener('click', async function () { gaMore(); var tok = pending; await renderGroup(curBest, bestEl, bestMore, tok); });
-    if (broaderMore) broaderMore.addEventListener('click', async function () { gaMore(); var tok = pending; await renderGroup(curBroader, broaderEl, broaderMore, tok); });
+    // Load-more click: give an INSTANT loading state (disabled + "Loading…") while the
+    // page appends, so the tap always registers visually even if data still fetches.
+    // With prefetchNext the append is usually already warm, so this flashes briefly.
+    function loadMore(btn, getG, cont) {
+      return async function () {
+        if (btn.disabled) return;
+        gaMore();
+        var tok = pending, orig = btn.innerHTML;
+        btn.disabled = true; btn.innerHTML = 'Loading…';
+        try { await renderGroup(getG(), cont, btn, tok); } catch (e) {}
+        finally { btn.disabled = false; btn.innerHTML = orig; }
+      };
+    }
+    moreBtn.addEventListener('click', loadMore(moreBtn, function () { return curSingle; }, resultsEl));
+    if (bestMore) bestMore.addEventListener('click', loadMore(bestMore, function () { return curBest; }, bestEl));
+    if (broaderMore) broaderMore.addEventListener('click', loadMore(broaderMore, function () { return curBroader; }, broaderEl));
     // GLOBAL sort toggle: clicking the track flips; clicking a label selects that
     // side. Drives sortPref for the WHOLE result set (Best + Broader + single list).
     function setSort(pref) { if (sortPref !== pref) { var gaFrom = sortPref === 'date' ? 'newest' : 'relevant'; sortPref = pref; try { window.__sfSort = pref; } catch (e) {} gaFire('sort_change', { from_mode: gaFrom, to_mode: pref === 'date' ? 'newest' : 'relevant', context: (sel.q ? 'search' : 'home') }); syncSortToggle(); run(); } }
