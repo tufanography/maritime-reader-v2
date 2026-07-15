@@ -228,23 +228,28 @@ export class SupabaseArticleRepository implements ArticleRepository {
     // the real ~51k (why it had to be hardcoded for hotfix builds). Memoized
     // (called ~3×/build). Falls back to the read length only if the estimate fails.
     if (_countMemo != null) return _countMemo;
-    // PRIMARY: the EXACT visible count. Floored to "N,000+" in the hero, so still an
-    // approximate figure — but unlike the planner estimate it can never run AWAY from
-    // reality. count:'estimated' reads pg_class.reltuples, which inflates ABOVE the
-    // true count during heavy UPDATE churn (backlog fixes / classification) until
-    // autovacuum catches up — MEASURED 2026-07-09: estimate 63,431 vs 60,744 truly
-    // visible, so the hero over-read "63,000+" (the estimate had drifted past the total
-    // and the old clamp pinned it to the 63,317 ALL-rows count, counting 2,535 hidden
-    // rows in). head:true keeps this a count-only scan; it returns in ~2s on Nano now.
+    // PRIMARY: derive the visible count by SUBTRACTION from cheap, reliable counts.
+    // Two tempting shortcuts both fail on Nano: count:'exact' over the visible filter
+    // statement-timeouts when COLD (a fresh build's first call — MEASURED 2026-07-09:
+    // HTTP 500 after 8.5s), and count:'estimated' runs AWAY above the true count during
+    // UPDATE churn (drifted to 63,431 vs 60,744 real, so the hero over-read "63,000+").
+    // Instead: total rows − non-visible content_quality (hidden/other) − null published_at.
+    // Each is a light count that returns in <300ms cold; any bucket overlap only makes
+    // the result a hair LOW, which is safe (the hero must never overstate). Floored to
+    // "N,000+" downstream, so the small residual never shows.
     const nowIso = new Date().toISOString();
     try {
-      const { count, error } = await supabase
-        .from('articles')
-        .select('id', { count: 'exact', head: true })
-        .or('content_quality.is.null,content_quality.in.(visible,pending)')
-        .not('published_at', 'is', null)
-        .lte('published_at', nowIso);
-      if (!error && typeof count === 'number') { _countMemo = count; return _countMemo; }
+      const head = () => supabase.from('articles').select('id', { count: 'exact', head: true });
+      const [totalR, excludedR, noDateR] = await Promise.all([
+        head(),
+        head().not('content_quality', 'is', null).not('content_quality', 'in', '(visible,pending)'),
+        head().is('published_at', null),
+      ]);
+      const total = totalR.count, excluded = excludedR.count, noDate = noDateR.count;
+      if (!totalR.error && typeof total === 'number' && typeof excluded === 'number' && typeof noDate === 'number') {
+        _countMemo = Math.max(0, total - excluded - noDate);
+        return _countMemo;
+      }
     } catch { /* fall through to the planner estimate */ }
 
     // FALLBACK (only if the exact visible count statement-timeouts on Nano): planner
