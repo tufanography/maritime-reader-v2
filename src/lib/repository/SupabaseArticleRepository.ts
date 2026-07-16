@@ -228,25 +228,36 @@ export class SupabaseArticleRepository implements ArticleRepository {
     // the real ~51k (why it had to be hardcoded for hotfix builds). Memoized
     // (called ~3×/build). Falls back to the read length only if the estimate fails.
     if (_countMemo != null) return _countMemo;
-    // PRIMARY: derive the visible count by SUBTRACTION from cheap, reliable counts.
-    // Two tempting shortcuts both fail on Nano: count:'exact' over the visible filter
-    // statement-timeouts when COLD (a fresh build's first call — MEASURED 2026-07-09:
-    // HTTP 500 after 8.5s), and count:'estimated' runs AWAY above the true count during
-    // UPDATE churn (drifted to 63,431 vs 60,744 real, so the hero over-read "63,000+").
-    // Instead: total rows − non-visible content_quality (hidden/other) − null published_at.
-    // Each is a light count that returns in <300ms cold; any bucket overlap only makes
-    // the result a hair LOW, which is safe (the hero must never overstate). Floored to
-    // "N,000+" downstream, so the small residual never shows.
+    // PRIMARY: derive the visible count by SUBTRACTION from cheap counts —
+    // total rows − non-visible content_quality − null published_at. The two shortcuts
+    // both fail on Nano: count:'exact' over the visible filter statement-timeouts when
+    // COLD (MEASURED 2026-07-09: HTTP 500 after 8.5s), and count:'estimated' runs AWAY
+    // above the true count during UPDATE churn (drifted to 63,431 vs 60,744 real → hero
+    // over-read "63,000+"). Each subtraction count is light, but a Nano count can still
+    // flake COLD (transient timeout/error) — which silently dropped later cron builds to
+    // the runaway-estimate fallback, flipping the hero back to "63,000+" (MEASURED
+    // 2026-07-16, same commit built 60,000 warm and 63,000 cold). So retry each count
+    // ONCE; the warmed plan then returns in <300ms. Overlap only makes the result a hair
+    // LOW — safe (never overstates). Floored to "N,000+", so the residual never shows.
     const nowIso = new Date().toISOString();
+    const countRetry = async (build: () => any): Promise<number | null> => {
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          const res = await build();
+          if (res && !res.error && typeof res.count === 'number') return res.count;
+        } catch { /* transient — retry */ }
+        if (attempt === 0) await new Promise((r) => setTimeout(r, 600));
+      }
+      return null;
+    };
     try {
       const head = () => supabase.from('articles').select('id', { count: 'exact', head: true });
-      const [totalR, excludedR, noDateR] = await Promise.all([
-        head(),
-        head().not('content_quality', 'is', null).not('content_quality', 'in', '(visible,pending)'),
-        head().is('published_at', null),
+      const [total, excluded, noDate] = await Promise.all([
+        countRetry(() => head()),
+        countRetry(() => head().not('content_quality', 'is', null).not('content_quality', 'in', '(visible,pending)')),
+        countRetry(() => head().is('published_at', null)),
       ]);
-      const total = totalR.count, excluded = excludedR.count, noDate = noDateR.count;
-      if (!totalR.error && typeof total === 'number' && typeof excluded === 'number' && typeof noDate === 'number') {
+      if (total != null && excluded != null && noDate != null) {
         _countMemo = Math.max(0, total - excluded - noDate);
         return _countMemo;
       }
