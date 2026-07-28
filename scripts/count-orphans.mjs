@@ -55,13 +55,28 @@ const sbKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.PUBLIC_SUPABA
 if (!sbUrl || !sbKey) { console.error('Supabase env yok (SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY)'); process.exit(1); }
 const sb = createClient(sbUrl, sbKey, { auth: { persistSession: false } });
 
+// live      = TUM makaleler (oksuz tespiti icin: R2'de var, DB'de hic yok)
+// shouldHave = SITEDE GORUNMESI GEREKENLER (eksik tespiti icin)
+// Ikisini ayirmak sart: site zaten 'hidden' makalelere sayfa uretmiyor, uretmemeli.
+// Hepsini "eksik" saymak her hafta ayni ~2.500 rakamini uretir, rakam hic degismez,
+// ucuncu haftada kimse bakmaz — sabit yanlis alarm, alarm degildir.
+// Gorunurluk kurali sitenin kendi sorgusuyla AYNI:
+//   SupabaseArticleRepository.ts:121
+//   .or('content_quality.is.null,content_quality.in.(visible,pending)')
 const live = new Set();
+const shouldHave = new Set();
 let cur = '00000000-0000-0000-0000-000000000000';
 for (;;) {
-  const { data, error } = await sb.from('articles').select('id').gt('id', cur).order('id', { ascending: true }).limit(1000);
+  const { data, error } = await sb.from('articles').select('id,content_quality')
+    .gt('id', cur).order('id', { ascending: true }).limit(1000);
   if (error) { console.error('Supabase HATASI: ' + error.message); process.exit(1); }
   if (!data || data.length === 0) break;
-  for (const r of data) live.add(r.id.toLowerCase());
+  for (const r of data) {
+    const id = r.id.toLowerCase();
+    live.add(id);
+    const q = r.content_quality;
+    if (q === null || q === undefined || q === 'visible' || q === 'pending') shouldHave.add(id);
+  }
   cur = data[data.length - 1].id;
   if (data.length < 1000) break;
 }
@@ -71,6 +86,7 @@ if (live.size > expected || expected - live.size > 50) {
   process.exit(1);
 }
 console.log(`veritabaninda makale : ${live.size}`);
+console.log(`  bunun SITEDE GORUNMESI gereken: ${shouldHave.size}  (gizli: ${live.size - shouldHave.size})`);
 
 // 4) Karsilastir
 const orphanIds = [...r2Articles.keys()].filter((id) => !live.has(id));
@@ -78,9 +94,11 @@ const orphanFiles = orphanIds.flatMap((id) => r2Articles.get(id));
 console.log(`\n=== OKSUZ (R2'de var, veritabaninda YOK) ===`);
 console.log(`   makale : ${orphanIds.length}`);
 console.log(`   dosya  : ${orphanFiles.length}`);
-const missingPages = [...live].filter((id) => !r2Articles.has(id)).length;
-console.log(`\nters yon — veritabaninda var ama R2'de sayfasi YOK: ${missingPages}`);
-console.log(`   (bunlar bir sonraki TAM derlemede uretilecek)`);
+const missingVisible = [...shouldHave].filter((id) => !r2Articles.has(id));
+const missingHidden = [...live].filter((id) => !shouldHave.has(id) && !r2Articles.has(id)).length;
+console.log(`\nters yon — R2'de sayfasi YOK:`);
+console.log(`   GORUNMESI GEREKEN ama sayfasi yok : ${missingVisible.length}   <-- izlenecek sayi`);
+console.log(`   gizli, sayfasi zaten olmamali     : ${missingHidden}   (dogru davranis)`);
 
 if (orphanIds.length) {
   console.log(`\nilk 5 oksuz makale kimligi:`);
@@ -90,7 +108,7 @@ if (orphanIds.length) {
 // --- 5) EKSIKLERIN TARIH DAGILIMI ------------------------------------------
 // "Gecikme mi, ariza mi?" sorusunun tek kesin cevabi. Hepsi son saatlerdeyse
 // derleme gecikmesi; aylara yayilmissa sayfa uretiminde sistemli bir sorun var.
-const missingIds = [...live].filter((id) => !r2Articles.has(id));
+const missingIds = missingVisible;
 if (missingIds.length) {
   const byDay = new Map();
   for (let i = 0; i < missingIds.length; i += 200) {
@@ -144,5 +162,15 @@ const tally = async (ids, label, highlight) => {
     console.log(`   ${k.padEnd(30)} ${v}${warn}`);
   }
 };
-if (missingIds.length) await tally(missingIds, "R2'de sayfasi olmayanlar", '404');
+// Sitemap uyeligi TAM sayilir — metin bellekte, istek gerekmiyor. Orneklem
+// yalnizca HTTP durumu icin gerekli (o istek gerektiriyor).
+if (sitemapText.length > 1000) {
+  const orphInSitemap = orphanIds.filter(inSitemap);
+  const missInSitemap = missingIds.filter(inSitemap);
+  console.log(`
+=== SITEMAP TAM SAYIM (orneklem degil) ===`);
+  console.log(`   silinen makalelerden sitemap'te olan : ${orphInSitemap.length}/${orphanIds.length}   <-- Google'a hala sunuluyor`);
+  console.log(`   gorunmesi gerekip sayfasi olmayanlardan sitemap'te olan: ${missInSitemap.length}/${missingIds.length}   <-- kirik baglanti`);
+}
+if (missingIds.length) await tally(missingIds, "gorunmesi gereken ama sayfasi olmayanlar", '404');
 if (orphanIds.length) await tally(orphanIds, 'silinen makaleler (oksuz)', '200');

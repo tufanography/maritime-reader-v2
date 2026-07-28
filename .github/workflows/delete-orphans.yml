@@ -1,0 +1,25 @@
+# R2'deki OKSUZ makale sayfalarini siler (veritabaninda artik olmayan makaleler).
+# Varsayilan KURU CALISMA. Silmek icin apply=true secilmeli.
+name: delete-orphans
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: 'true = gercekten sil (bos birakilirsa sadece kuru calisma)'
+        required: false
+        default: 'false'
+jobs:
+  clean:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - name: Oksuz sayfalari sil
+        run: node scripts/delete-orphans.mjs ${{ inputs.apply == 'true' && '--apply' || '' }}
+        env:
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          SUPABASE_URL: ${{ secrets.PUBLIC_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.PUBLIC_SUPABASE_ANON_KEY }}
