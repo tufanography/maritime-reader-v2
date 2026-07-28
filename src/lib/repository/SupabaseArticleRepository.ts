@@ -130,6 +130,22 @@ export class SupabaseArticleRepository implements ArticleRepository {
     // → one DB read, the rest are in-memory slices (minimises Nano Disk-IO).
     if (_visibleMemo && _visibleMemo.limit >= limit) return _visibleMemo.rows.slice(0, limit);
     const rows = await this._readVisibleKeyset(limit);
+    // TRUNCATION WARNING. Getting back EXACTLY the limit almost always means the
+    // archive is larger than the ceiling and the tail was cut — silently.
+    // MEASURED 2026-07-28: ARTICLE_PAGE_LIMIT defaults to 60000 while the visible
+    // archive had grown to 62,975, so ~2,975 of the OLDEST articles were absent
+    // from BOTH the search index and the sitemap (sitemap.xml.ts:21 calls this
+    // same method). Nothing anywhere said so; the build reported success and the
+    // workflow comment still described 60000 as "the whole visible archive".
+    // Raising the ceiling is a separate decision (build time + Nano Disk-IO), but
+    // the condition must never again be invisible.
+    if (rows.length === limit) {
+      console.warn(
+        `listVisible returned EXACTLY ${limit} rows — the limit is probably truncating ` +
+        `the archive. Oldest articles are then missing from the search index AND the ` +
+        `sitemap. Check ARTICLE_PAGE_LIMIT against the visible article count.`,
+      );
+    }
     _visibleMemo = { limit, rows };
     return rows;
   }

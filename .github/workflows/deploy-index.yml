@@ -1,0 +1,36 @@
+# Arama indeksini yeniden uretir — sitemap'e DOKUNMAZ.
+# Neden ayri: base `_pagefind/` sadece tam derlemede uretiliyor. Ama tam derleme
+# sitemap'i de yeniden yaziyor ve sitemap ARTICLE_PAGE_LIMIT ile sinirli (60000),
+# gorunur arsiv ise 62975 — yani yayinlanan sitemap mevcut olandan KISA olurdu.
+# (2026-06-15'te ayni sey ~49k makaleyi Google'dan dusurmustu.)
+name: deploy-index
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'true = sadece kac dosya yuklenecegini goster, yukleme yapma'
+        required: false
+        default: 'true'
+jobs:
+  rebuild-index:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    concurrency:
+      group: r2-deploy      # deploy-base / deploy-delta ile manifest yarisi olmasin
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - name: Tam derleme + base Pagefind indeksi
+        run: npm run build
+        env:
+          PUBLIC_SUPABASE_URL: ${{ secrets.PUBLIC_SUPABASE_URL }}
+          PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.PUBLIC_SUPABASE_ANON_KEY }}
+      - name: R2'ye yukle (sitemap haric)
+        run: npm run deploy:r2
+        env:
+          DEPLOY_MODE: index
+          DRY_RUN: ${{ inputs.dry_run == 'true' && '1' || '' }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
