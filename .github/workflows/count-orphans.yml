@@ -1,0 +1,21 @@
+# GECICI olcum. Hicbir sey silmez, hicbir sey yuklemez — sadece SAYAR.
+# Soru: R2'de duran ama veritabaninda artik olmayan kac makale sayfasi var?
+# deploy-r2.mjs bilerek hicbir seyi silmiyor ("periodic cleanup is a separate
+# chore") ve o temizlik hic yapilmamis olabilir. Buyuklugu bilinmiyor.
+name: count-orphans
+on: workflow_dispatch
+jobs:
+  count:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - name: Oksuz makale sayfalarini say
+        run: node scripts/count-orphans.mjs
+        env:
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          SUPABASE_URL: ${{ secrets.PUBLIC_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.PUBLIC_SUPABASE_ANON_KEY }}
