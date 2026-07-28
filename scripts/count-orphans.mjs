@@ -86,3 +86,63 @@ if (orphanIds.length) {
   console.log(`\nilk 5 oksuz makale kimligi:`);
   for (const id of orphanIds.slice(0, 5)) console.log(`   ${id}   (${r2Articles.get(id).length} dosya)`);
 }
+
+// --- 5) EKSIKLERIN TARIH DAGILIMI ------------------------------------------
+// "Gecikme mi, ariza mi?" sorusunun tek kesin cevabi. Hepsi son saatlerdeyse
+// derleme gecikmesi; aylara yayilmissa sayfa uretiminde sistemli bir sorun var.
+const missingIds = [...live].filter((id) => !r2Articles.has(id));
+if (missingIds.length) {
+  const byDay = new Map();
+  for (let i = 0; i < missingIds.length; i += 200) {
+    const { data, error } = await sb.from('articles')
+      .select('id,created_at,content_quality').in('id', missingIds.slice(i, i + 200));
+    if (error) { console.error('tarih sorgusu HATASI: ' + error.message); break; }
+    for (const r of data ?? []) {
+      const k = String(r.created_at).slice(0, 10) + '|' + (r.content_quality ?? '-');
+      byDay.set(k, (byDay.get(k) ?? 0) + 1);
+    }
+  }
+  console.log(`\n=== R2'de sayfasi OLMAYAN ${missingIds.length} makale — gun + kalite ===`);
+  const rows = [...byDay.entries()].sort((a, b) => b[0].localeCompare(a[0]));
+  for (const [k, c] of rows.slice(0, 20)) {
+    const [d, q] = k.split('|');
+    console.log(`   ${d}  ${String(q).padEnd(9)} ${String(c).padStart(6)}`);
+  }
+  if (rows.length > 20) console.log(`   ... ${rows.length - 20} satir daha`);
+  const days = [...new Set(rows.map((r) => r[0].split('|')[0]))].sort();
+  console.log(`   -> ${days.length} FARKLI GUN  (${days[0]} .. ${days[days.length - 1]})`);
+}
+
+// --- 6) SITEMAP CAPRAZ KONTROLU --------------------------------------------
+// Bir sayfa ancak DUYURULUYORSA zarar verir. deploy-r2.mjs satir 114: delta modu
+// sitemap.xml'e dokunmaz, yani sitemap yalnizca haftalik deploy-base ile tazelenir.
+const probe = async (u) => {
+  try { const r = await fetch(u, { headers: { 'Cache-Control': 'no-cache' } }); return r.status; }
+  catch { return 0; }
+};
+let sitemapText = '';
+try {
+  const r = await fetch('https://maritimereader.com/sitemap.xml');
+  sitemapText = await r.text();
+  const kids = [...sitemapText.matchAll(/<loc>([^<]*sitemaps[^<]*)<\/loc>/g)].map((m) => m[1]);
+  console.log(`\nsitemap.xml: HTTP ${r.status}, ${kids.length} alt sitemap`);
+  for (const k of kids.slice(0, 15)) { try { sitemapText += await (await fetch(k)).text(); } catch { /* atla */ } }
+  console.log(`   toplam sitemap metni: ${(sitemapText.length / 1024 / 1024).toFixed(1)} MB`);
+} catch (e) { console.error('sitemap okunamadi: ' + e.message); }
+const inSitemap = (id) => sitemapText.includes(id);
+
+const tally = async (ids, label, highlight) => {
+  const b = {};
+  for (const id of ids.slice(0, 20)) {
+    const st = await probe(`https://maritimereader.com/article/${id}/`);
+    const k = `${inSitemap(id) ? 'sitemapte VAR' : 'sitemapte yok'} / HTTP ${st === 200 ? '200' : st}`;
+    b[k] = (b[k] ?? 0) + 1;
+  }
+  console.log(`\n=== 20 ORNEK — ${label} ===`);
+  for (const [k, v] of Object.entries(b)) {
+    const warn = k.includes('VAR') && k.includes(highlight) ? '   <-- ' + (highlight === '404' ? 'KIRIK BAGLANTI' : 'GOOGLE HALA GORUYOR') : '';
+    console.log(`   ${k.padEnd(30)} ${v}${warn}`);
+  }
+};
+if (missingIds.length) await tally(missingIds, "R2'de sayfasi olmayanlar", '404');
+if (orphanIds.length) await tally(orphanIds, 'silinen makaleler (oksuz)', '200');
