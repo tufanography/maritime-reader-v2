@@ -8,12 +8,17 @@
 // the hybrid (static recent + Worker archive) design is decided.
 // Max article detail pages the static build emits. v2 serves from R2 (no
 // Cloudflare Pages file-count limit anymore — see site-worker/), so this is
-// just the archive cap: 60000 comfortably covers the ~50.5k visible archive
-// with headroom. (Was temporarily lowered to 2100 on 2026-06-05/06 for two
-// feed-only hotfix builds while the Nano DB was saturated; restored here.)
-// Env-overridable so the auto-rebuild pipeline can run a LIGHT feed-only build
-// (e.g. ARTICLE_PAGE_LIMIT=2000 every 3h — reads only the recent rows, cheap on
-// Nano) vs the daily FULL build (unset → 60000, the whole visible archive).
+// just the archive cap. The base build sets 95000 (deploy-base.yml); the
+// visible archive is ~63.3k (MEASURED 2026-07-29), so 95000 has headroom.
+// ⚠ This fixed number is INTERIM. It is not a real limit — the base build
+// wants "the whole visible archive", full stop. A hand-bumped ceiling silently
+// truncated the tail once already (60000 vs 62,975, see the STRICT guard in
+// SupabaseArticleRepository). Planned: replace it with a >20%-change guard so
+// the build tracks the archive instead of a number nobody remembers to raise.
+// (Was temporarily 2100 on 2026-06-05/06 for two feed-only hotfix builds while
+// the Nano DB was saturated.) Env-overridable so the pipeline can run a LIGHT
+// feed-only build (delta: ARTICLE_PAGE_LIMIT=2100 — a SCOPE "last N", not a
+// limit) vs the FULL base build (95000 = the whole visible archive).
 // Build-time only (getStaticPaths runs in Node), so process.env is correct.
 export const ARTICLE_PAGE_LIMIT = Number(process.env.ARTICLE_PAGE_LIMIT) || 60000;
 
