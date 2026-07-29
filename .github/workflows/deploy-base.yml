@@ -11,6 +11,11 @@ on:
   schedule:
     - cron: '0 4 * * 0'    # Sundays 04:00 UTC
   workflow_dispatch:        # manual run button
+    inputs:
+      dry_run:
+        description: 'Report R2 PUTs without uploading (measure before the real run)'
+        type: boolean
+        default: false
 # Serialize with deploy-delta so the two never race the R2 manifest.
 concurrency:
   group: maritime-r2-deploy
@@ -29,12 +34,21 @@ jobs:
       - name: Full build + base Pagefind index (full DB read)
         run: npm run build   # runs postbuild → pagefind --site dist (base _pagefind)
         env:
-          # unset ARTICLE_PAGE_LIMIT → defaults to 60000 (whole visible archive)
+          # Ceiling for the WHOLE visible archive. Raised 60000→95000 on 2026-07-29:
+          # the visible archive had grown to ~62,975 and the old 60000 default was
+          # silently truncating ~2,975 of the OLDEST articles out of BOTH the search
+          # index and the sitemap (see SupabaseArticleRepository.ts truncation guard).
+          # STRICT=1 → this build treats hitting the ceiling as a hard error (base
+          # build must cover the whole archive; delta build leaves STRICT unset).
+          ARTICLE_PAGE_LIMIT: '95000'
+          ARTICLE_LIMIT_STRICT: '1'
           PUBLIC_SUPABASE_URL: ${{ secrets.PUBLIC_SUPABASE_URL }}
           PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.PUBLIC_SUPABASE_ANON_KEY }}
       - name: Incremental upload (full scope — base + site)
         run: npm run deploy:r2
         env:
           DEPLOY_MODE: full
+          # Manual dry-run: reports the R2 PUT count (deploy-r2.mjs) without uploading.
+          DRY_RUN: ${{ github.event.inputs.dry_run == 'true' && '1' || '0' }}
           R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}

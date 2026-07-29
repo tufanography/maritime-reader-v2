@@ -1,7 +1,7 @@
 import { supabase } from '../supabase';
 import type { Article } from './types';
 import type { ArticleRepository } from './ArticleRepository';
-import { ARTICLE_PAGE_LIMIT } from '../config';
+import { ARTICLE_PAGE_LIMIT, ARTICLE_LIMIT_STRICT } from '../config';
 
 // The Supabase project caps PostgREST responses at 1,000 rows (proven
 // 2026-05-31: listVisible(4000) returned exactly 1000). To build more than
@@ -139,11 +139,28 @@ export class SupabaseArticleRepository implements ArticleRepository {
     // workflow comment still described 60000 as "the whole visible archive".
     // Raising the ceiling is a separate decision (build time + Nano Disk-IO), but
     // the condition must never again be invisible.
-    if (rows.length === limit) {
+    // Never let the ceiling cut the tail silently again (measured 2026-07-28).
+    // STRICT (base build): hitting the limit = broken artifact → HARD FAIL, so a
+    // red build forces a ceiling bump instead of a silent partial deploy. Also warn
+    // loudly at ≥90% so we get a heads-up with headroom, before truncation happens.
+    // Non-strict (delta build, limit=2100 is a deliberate cap): exactly-limit is
+    // expected — stay silent so the feed build never fails on its own cap.
+    if (ARTICLE_LIMIT_STRICT && rows.length >= limit) {
+      throw new Error(
+        `ARTICLE_PAGE_LIMIT ceiling hit: got ${rows.length} of limit ${limit}. The visible ` +
+        `archive is being truncated — oldest articles would be missing from the search index ` +
+        `AND the sitemap. Raise ARTICLE_PAGE_LIMIT (deploy-base.yml) before deploying.`,
+      );
+    }
+    if (ARTICLE_LIMIT_STRICT && rows.length >= limit * 0.9) {
       console.warn(
-        `listVisible returned EXACTLY ${limit} rows — the limit is probably truncating ` +
-        `the archive. Oldest articles are then missing from the search index AND the ` +
-        `sitemap. Check ARTICLE_PAGE_LIMIT against the visible article count.`,
+        `⚠ listVisible at ${rows.length}/${limit} (≥90% of ceiling) — raise ARTICLE_PAGE_LIMIT soon; ` +
+        `the archive is approaching the ceiling and will start truncating silently past it.`,
+      );
+    } else if (!ARTICLE_LIMIT_STRICT && rows.length === limit) {
+      console.warn(
+        `listVisible returned EXACTLY ${limit} rows (delta cap — expected). ` +
+        `If this was a FULL build, ARTICLE_PAGE_LIMIT is truncating the archive.`,
       );
     }
     _visibleMemo = { limit, rows };

@@ -16,3 +16,9 @@
 // Nano) vs the daily FULL build (unset → 60000, the whole visible archive).
 // Build-time only (getStaticPaths runs in Node), so process.env is correct.
 export const ARTICLE_PAGE_LIMIT = Number(process.env.ARTICLE_PAGE_LIMIT) || 60000;
+
+// When '1' (set by the base build), hitting ARTICLE_PAGE_LIMIT is a HARD ERROR,
+// not a silent tail-cut — the base build is meant to cover the WHOLE archive.
+// The delta/feed build leaves this unset: its low limit (2100) is a deliberate
+// cap, so exactly-limit rows are expected there and must NOT fail the build.
+export const ARTICLE_LIMIT_STRICT = process.env.ARTICLE_LIMIT_STRICT === '1';
