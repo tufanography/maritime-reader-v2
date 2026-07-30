@@ -72,6 +72,7 @@ type Row = {
   segments: string[] | null;
   semantic_themes: string[] | null;
   keywords: string[] | null;
+  content_terms: string[] | null;
   image_url: string | null;
   sources: { name: string } | { name: string }[] | null;
 };
@@ -95,12 +96,16 @@ function toArticle(r: Row): Article {
     segments: r.segments ?? [],
     themes: r.semantic_themes ?? [],
     keywords: r.keywords ?? [],
+    contentTerms: r.content_terms ?? [],
     imageUrl: r.image_url,
   };
 }
 
+// NOTE: `content_terms` requires migration 040 (article table). Selecting a
+// non-existent column makes PostgREST 400 the query → the whole static build
+// fails. Apply migration 040 BEFORE deploying this change.
 const SELECT =
-  'id, title, url, raw_excerpt, published_at, published_at_source, document_type, segments, semantic_themes, keywords, image_url, sources(name)';
+  'id, title, url, raw_excerpt, published_at, published_at_source, document_type, segments, semantic_themes, keywords, content_terms, image_url, sources(name)';
 
 // Shared visibility predicate — kept in one place so every list query is
 // consistent. If we ever add a new "list by X" method, it goes through

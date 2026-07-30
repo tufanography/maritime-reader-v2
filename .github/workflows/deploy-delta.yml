@@ -12,6 +12,12 @@ on:
   schedule:
     - cron: '37 */2 * * *'  # every 2h at :37 (UTC). NOT :00 — GitHub silently drops scheduled runs queued on the contended top-of-hour minute (measured 2026-06-10: the :00 02h & 04h runs never fired, leaving the site on a 4h-stale snapshot). An odd off-peak minute is far less likely to be dropped. R2 incremental upload makes each run cheap (~97-1300 files, ~150k/mo << 1M free); public repo = unlimited GHA.
   workflow_dispatch:         # manual run button
+  # Fired by the ingestion repo's scrape.yml (repository_dispatch, event_type
+  # 'fresh-content') ONLY when a scrape actually inserted new articles — so the
+  # feed + search refresh right after new content lands instead of waiting up to
+  # 2h for the next scheduled cron. Requires V2_DISPATCH_TOKEN on the ingestion side.
+  repository_dispatch:
+    types: [fresh-content]
 # Serialize with deploy-base so the two never race the R2 manifest.
 concurrency:
   group: maritime-r2-deploy

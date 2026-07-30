@@ -12,5 +12,8 @@ export type Article = {
   segments: string[];
   themes: string[];
   keywords: string[];
+  /** Deterministic keyword-extractor output over the article body (migration 040).
+   *  Rendered into the Pagefind body for search recall; not shown on the page. */
+  contentTerms: string[];
   imageUrl: string | null;
 };

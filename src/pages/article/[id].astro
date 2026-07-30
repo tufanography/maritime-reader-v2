@@ -139,6 +139,15 @@ const desc = a.excerpt?.slice(0, 160) ?? a.title;
         Inside data-pagefind-body so it joins the searchable text. Needs a regen. */}
     {a.excerpt && <div class="sr-only">{a.excerpt}</div>}
 
+    {/* CONTENT TERMS (migration 040): deterministic keyword-extractor output over
+        the article BODY (in the scraper; body text itself is never stored). These
+        are the ship names / ports / companies / people that live in the article but
+        not the title or excerpt — measured baseline 0/22 such body-terms findable.
+        Emitted sr-only INSIDE data-pagefind-body so Pagefind indexes them for search
+        recall while the page still shows only the title. Terms only (proper nouns /
+        facts), not prose. Needs a Pagefind regen to take effect. */}
+    {a.contentTerms.length > 0 && <div class="sr-only">{a.contentTerms.join(' ')}</div>}
+
     <div class="mb-4 text-sm">
       <a href="/" class="text-slate-500 hover:text-sky-600">← Back to latest</a>
     </div>
