@@ -789,7 +789,14 @@
         "about consumption",
         "hull fouling",
         "bottom fouling",
-        "slow steaming"
+        "slow steaming",
+        "warranted speed",
+        "underperformance",
+        "off-hire",
+        "charterparty performance",
+        "arbitration award",
+        "significant wave height",
+        "weather working day"
       ],
       "narrow": {
         "good weather day": [
