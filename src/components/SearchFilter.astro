@@ -1179,29 +1179,6 @@ const docCount = (Math.floor((total || 54000) / 1000) * 1000).toLocaleString('en
         var bestTierList = bestByDate
           ? [bestTiers.reduce(function (acc, t) { return acc.concat(t); }, [])]
           : bestTiers;
-        // RELEVANCE mode: ORDER Best by the same query's UNQUOTED, SCORED search — leave
-        // MEMBERSHIP untouched (coach 2026-08, MEASURED). Best is built from QUOTED phrase
-        // searches (tier0 raw phrase + tier1 seed/chip phrases); Pagefind scores every
-        // quoted-phrase hit === 1, so pullGroup (which in relevance mode drains tiers in
-        // ENTRY order, not by score) surfaced an arbitrary order — BIMCO biofuel on top of
-        // "speed and consumption" instead of the S&C-claim articles. The Broader group
-        // already runs that exact unquoted+scored search (brSearches[0]) whenever broad is
-        // a single relevance-ordered stream, so REUSE it → zero extra pf.search. Members
-        // absent from the scored set (generic chips like "noon report") sink to the bottom
-        // in their existing entry order (stable). Newest mode is unchanged (date collapse
-        // above). Fully synchronous — no semantic/artifact/timing involvement.
-        if (!bestByDate) {
-          var rankSrc;
-          if (!brByDate && brSearches.length === 1) { rankSrc = brSearches[0].results; }
-          else { try { rankSrc = (await pf.search(raw, { filters: filt })).results; } catch (e) { rankSrc = []; } if (pending !== token) return; }
-          var rankMap = {}; for (var ri = 0; ri < rankSrc.length; ri++) { var rid = rankSrc[ri].id; if (rankMap[rid] === undefined) rankMap[rid] = ri; }
-          var mem = [], memSeen = {};
-          bestTiers.forEach(function (tier) { tier.forEach(function (s) { for (var mi = 0; mi < s.results.length; mi++) { var mr = s.results[mi]; if (mr && mr.id != null && !memSeen[mr.id]) { memSeen[mr.id] = 1; mem.push(mr); } } }); });
-          var BIG = 1e9;
-          var dec = mem.map(function (r, i) { var rk = rankMap[r.id]; return { r: r, k: (rk === undefined ? BIG + i : rk) }; });
-          dec.sort(function (a, b) { return a.k - b.k; });
-          bestTierList = [ [ { results: dec.map(function (d) { return d.r; }), idx: 0 } ] ];
-        }
         curBest = { tiers: bestTierList, byDate: bestByDate, seen: {} };
         curBroader = { tiers: [ brSearches.map(function (s) { return { results: s.results, idx: 0 }; }) ], byDate: brByDate, seen: {}, excludeIds: bestIds };
         curSingle = null;
