@@ -1643,19 +1643,24 @@ const docCount = (Math.floor((total || 54000) / 1000) * 1000).toLocaleString('en
     // so a fast search shows nothing and a slow one gets an honest explanation (never an
     // apology that makes the site look slow). Cleared the instant the re-rank paints.
     var statusEl = null, statusTimers = [];
-    function clearStatus(){ for (var i = 0; i < statusTimers.length; i++) clearTimeout(statusTimers[i]); statusTimers = []; if (statusEl && statusEl.parentNode) statusEl.parentNode.removeChild(statusEl); statusEl = null; }
+    function clearStatus(){ for (var i = 0; i < statusTimers.length; i++) clearTimeout(statusTimers[i]); statusTimers = []; if (resultsWrap) resultsWrap.classList.remove('sf-ranking'); if (statusEl && statusEl.parentNode) statusEl.parentNode.removeChild(statusEl); statusEl = null; }
     function startStatus(){
       clearStatus();
       if (!resultsWrap) return;
+      // Hide the cards until the relevance re-rank has settled, so the user never sees
+      // the list reshuffle under them (the jump). NOT a blank screen — the spinner+text
+      // below sit in the same box. Prefetched/fast searches lift this in well under the cap.
+      resultsWrap.classList.add('sf-ranking');
       statusEl = document.createElement('div'); statusEl.id = 'sf-rank-status';
       statusEl.innerHTML = '<span class="sf-rank-spin" aria-hidden="true"></span><span class="sf-rank-msg" aria-live="polite"></span>';
       resultsWrap.insertBefore(statusEl, resultsWrap.firstChild);
       var msg = statusEl.querySelector('.sf-rank-msg');
       var set = function(t){ if (msg) msg.textContent = t; };
-      statusTimers.push(setTimeout(function(){ set('Searching…'); }, 900));
-      statusTimers.push(setTimeout(function(){ set('Ranking by relevance…'); }, 3000));
-      statusTimers.push(setTimeout(function(){ set('Still ranking — best matches so far below'); }, 8000));
-      statusTimers.push(setTimeout(function(){ clearStatus(); }, 15000));   // failsafe: never let the status hang
+      statusTimers.push(setTimeout(function(){ set('Ranking by relevance…'); }, 700));
+      // 2.5s CAP (coach): if the artifact is slow/absent, stop hiding and reveal the
+      // keyword ordering with an honest note — the safety net beats an endless spinner.
+      // A single reveal either way (ranked if ready, keyword if capped) → no reshuffle.
+      statusTimers.push(setTimeout(function(){ if (resultsWrap) resultsWrap.classList.remove('sf-ranking'); set('Showing keyword matches'); }, 2500));
     }
     function attachObs(){ ['#sf-best', '#sf-broader', '#sf-results'].forEach(function(sel){ var el = document.querySelector(sel); if (el && kwObs) kwObs.observe(el, { childList: true, subtree: true }); }); }
     function observeKeyword(){
@@ -1759,4 +1764,9 @@ const docCount = (Math.floor((total || 54000) / 1000) * 1000).toLocaleString('en
   .sf-rank-spin { width: 14px; height: 14px; flex: none; border: 2px solid #cbd5e1; border-top-color: #b91c1c; border-radius: 50%; animation: sf-rank-rot 0.8s linear infinite; }
   @keyframes sf-rank-rot { to { transform: rotate(360deg); } }
   @media (prefers-reduced-motion: reduce) { .sf-rank-spin { animation-duration: 2s; } }
+  /* While ranking, hide the cards (not the whole box — the spinner status stays visible)
+     so the list reveals ONCE, ranked, instead of reshuffling under the reader. */
+  #sf-results-wrap.sf-ranking #sf-best,
+  #sf-results-wrap.sf-ranking #sf-broader,
+  #sf-results-wrap.sf-ranking #sf-results { visibility: hidden; }
 </style>
