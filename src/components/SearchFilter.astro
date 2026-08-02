@@ -1258,12 +1258,6 @@ const docCount = (Math.floor((total || 54000) / 1000) * 1000).toLocaleString('en
     if (sortTrack) sortTrack.addEventListener('click', function () { setSort(sortPref === 'date' ? null : 'date'); });
     if (sortRelLbl) sortRelLbl.addEventListener('click', function () { setSort(null); });
     if (sortDateLbl) sortDateLbl.addEventListener('click', function () { setSort('date'); });
-    // Bridge for the semantic layer: re-run the keyword search in the CURRENT mode once the
-    // vector artifact finishes loading (called by readyRerankOnce in the semantic IIFE).
-    // Measured need: the first search ranks at query-time when semSim=0 (artifact not down
-    // yet) → keyword+recency frame (BIMCO); nothing re-ranks when the artifact lands. This
-    // lets it re-rank once, exactly what a 2nd search / the toggle already do.
-    try { window.__sfRerun = run; } catch (e) {}
     clearBtn.addEventListener('click', function () {
       sel.q = ''; qEl.value = ''; ALL_FACETS.forEach(function (k) { sel[k] = new Set(); }); syncQClear(); run();
     });
@@ -1570,23 +1564,6 @@ const docCount = (Math.floor((total || 54000) / 1000) * 1000).toLocaleString('en
     var lastQv = null, idIndex = null;   // current query vector + id→row map (for hybrid re-rank)
     var DOC = { news:'News', press_release:'Press', pi_circular:'P&I', class_notice:'Class', regulation:'Regulation', market_report:'Market', casualty_report:'Casualty', psc_report:'PSC' };
     function esc(s){ return (s == null ? '' : String(s)).replace(/[&<>"]/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
-    // Re-rank ONCE when the vector artifact finishes loading, if a query is still active.
-    // The first search ranks at query-time with semSim=0 (artifact not down) → keyword+
-    // recency frame; this triggers the same path a 2nd search / toggle takes, now with real
-    // vectors. Four locks (coach): (1) once only, (2) current query only — __sfRerun reads
-    // the live qEl.value so a query typed while waiting isn't overwritten, (3) only if still
-    // in relevance mode, (4) not if the user has scrolled (don't yank the list out from under
-    // someone who started reading after the 2.5s cap revealed it).
-    var rerankedOnce = false;
-    function readyRerankOnce(){
-      if (rerankedOnce) return;
-      var q = ((qEl.value || '').trim());
-      if (q.length < 2) return;                                         // no active query (pure prefetch)
-      if (window.__sfSort === 'date') return;                           // user switched to Newest — leave it
-      if ((window.scrollY || window.pageYOffset || 0) > 40) return;     // user is reading — don't reshuffle
-      rerankedOnce = true;
-      try { if (typeof window.__sfRerun === 'function') window.__sfRerun(); } catch (e) {}
-    }
     function load(){
       if (loaded) return Promise.resolve(true);
       if (loadingP) return loadingP;
@@ -1595,7 +1572,7 @@ const docCount = (Math.floor((total || 54000) / 1000) * 1000).toLocaleString('en
         return Promise.all([
           fetch(ART + 'vectors.bin').then(function(r){ if(!r.ok) throw 0; return r.arrayBuffer(); }),
           fetch(ART + 'cards.json').then(function(r){ if(!r.ok) throw 0; return r.json(); })
-        ]).then(function(a){ VEC = new Int8Array(a[0]); CARDS = a[1]; loaded = true; readyRerankOnce(); return true; });
+        ]).then(function(a){ VEC = new Int8Array(a[0]); CARDS = a[1]; loaded = true; return true; });
       }).catch(function(){ loadingP = null; return false; });
       return loadingP;
     }
