@@ -1266,7 +1266,16 @@ const docCount = (Math.floor((total || 54000) / 1000) * 1000).toLocaleString('en
     });
     qEl.addEventListener('input', function () {
       sel.q = qEl.value.trim();
-      sortPref = 'date'; try { window.__sfSort = sortPref; } catch (e) {} // default Newest (safe); the hybrid recency re-rank is opt-in via "Most relevant" until boilerplate cleanup (#7) + tuning enable a default flip
+      // DEFAULT-FLIP (coach 2026-08, MEASURED): a query present = search intent → default
+      // to "Most relevant" (semantic+keyword RRF re-rank); empty box = browsing the feed →
+      // "Newest". Measured wins: speed-and-consumption/Ever Given/ballast surface the real
+      // article; Hormuz/war-risk trade freshness for focus (freshness weight is STEP 2).
+      // Keyword renders independently so the list is never blank if the vector artifact is
+      // slow/absent (verified: artifact blocked → 20 keyword results). syncSortToggle keeps
+      // the toggle visually honest — no silent mode switch.
+      sortPref = sel.q.length > 0 ? null : 'date';
+      try { window.__sfSort = sortPref; } catch (e) {}
+      try { syncSortToggle(); } catch (e) {}
       syncQClear();
       clearTimeout(debounce);
       // Short queries match a huge slice of the 51k index — heavy + useless, and
@@ -1628,6 +1637,26 @@ const docCount = (Math.floor((total || 54000) / 1000) * 1000).toLocaleString('en
     }
 
     var lastIds = null, kwObs = null, reT;
+    // STAGED loading status (coach 2026-08): keyword results show instantly (safety net),
+    // but the relevance re-rank waits on the 22MB artifact. Explain the wait ONLY if it
+    // actually lasts — a calm spinner (no blink) + a message that escalates by elapsed time,
+    // so a fast search shows nothing and a slow one gets an honest explanation (never an
+    // apology that makes the site look slow). Cleared the instant the re-rank paints.
+    var statusEl = null, statusTimers = [];
+    function clearStatus(){ for (var i = 0; i < statusTimers.length; i++) clearTimeout(statusTimers[i]); statusTimers = []; if (statusEl && statusEl.parentNode) statusEl.parentNode.removeChild(statusEl); statusEl = null; }
+    function startStatus(){
+      clearStatus();
+      if (!resultsWrap) return;
+      statusEl = document.createElement('div'); statusEl.id = 'sf-rank-status';
+      statusEl.innerHTML = '<span class="sf-rank-spin" aria-hidden="true"></span><span class="sf-rank-msg" aria-live="polite"></span>';
+      resultsWrap.insertBefore(statusEl, resultsWrap.firstChild);
+      var msg = statusEl.querySelector('.sf-rank-msg');
+      var set = function(t){ if (msg) msg.textContent = t; };
+      statusTimers.push(setTimeout(function(){ set('Searching…'); }, 900));
+      statusTimers.push(setTimeout(function(){ set('Ranking by relevance…'); }, 3000));
+      statusTimers.push(setTimeout(function(){ set('Still ranking — best matches so far below'); }, 8000));
+      statusTimers.push(setTimeout(function(){ clearStatus(); }, 15000));   // failsafe: never let the status hang
+    }
     function attachObs(){ ['#sf-best', '#sf-broader', '#sf-results'].forEach(function(sel){ var el = document.querySelector(sel); if (el && kwObs) kwObs.observe(el, { childList: true, subtree: true }); }); }
     function observeKeyword(){
       if (kwObs) return;
@@ -1690,12 +1719,14 @@ const docCount = (Math.floor((total || 54000) / 1000) * 1000).toLocaleString('en
         }
         reorder(cont);
         updateCount();
+        clearStatus();   // relevance re-rank has painted → drop the loading status
       } catch (e) {}
       if (had) attachObs();
     }
     function run(){
       var q = (qEl.value || '').trim();
-      if (q.length < 2) { lastIds = null; lastQv = null; apply(); return; }
+      if (q.length < 2) { lastIds = null; lastQv = null; clearStatus(); apply(); return; }
+      if (window.__sfSort !== 'date') startStatus(); else clearStatus();   // status only in relevance mode
       var my = ++token;
       load().then(function(ok){
         if (!ok || my !== token) return;
@@ -1709,6 +1740,11 @@ const docCount = (Math.floor((total || 54000) / 1000) * 1000).toLocaleString('en
       }).catch(function(){ /* silent — keyword search is unaffected */ });
     }
     qEl.addEventListener('input', function(){ clearTimeout(debounce); debounce = setTimeout(run, 350); });
+    // PREFETCH (coach 2026-08): start pulling the ~22MB vector artifact the moment the
+    // box is focused, so the 3-4s the user spends typing isn't dead time. load() is
+    // idempotent (loaded/loadingP guard) so this can't double-fetch. Keyword search is
+    // unaffected either way — this only warms the cache so the relevance re-rank paints sooner.
+    qEl.addEventListener('focus', function(){ try { load(); } catch (e) {} }, { once: true });
   })();
 </script>
 
@@ -1716,4 +1752,11 @@ const docCount = (Math.floor((total || 54000) / 1000) * 1000).toLocaleString('en
   /* Meaning-based results now render through the shared keyword-card template and
      sit in #sfx-wrap (Tailwind grid) directly below the keyword results — no separate
      styling. Old .sfx-* mini-card styles removed 2026-07. */
+
+  /* Staged relevance-ranking status (coach 2026-08). Calm spinner — a steady rotation,
+     NOT a blink (blink reads as "broken"). Muted slate text, no apology copy. */
+  #sf-rank-status { display: flex; align-items: center; gap: 8px; padding: 8px 2px 4px; color: #64748b; font-size: 0.85rem; line-height: 1.2; }
+  .sf-rank-spin { width: 14px; height: 14px; flex: none; border: 2px solid #cbd5e1; border-top-color: #b91c1c; border-radius: 50%; animation: sf-rank-rot 0.8s linear infinite; }
+  @keyframes sf-rank-rot { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .sf-rank-spin { animation-duration: 2s; } }
 </style>
