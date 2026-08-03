@@ -499,6 +499,13 @@ const docCount = (Math.floor((total || 54000) / 1000) * 1000).toLocaleString('en
     }
 
     var pf = null, pfDelta = null, pending = null, debounce = null;
+    // TEST SEAM (permanent — do NOT delete). ?sfxDelayBroader=<ms> artificially delays
+    // the Broader render so the "Best rendered / Broader still empty" window — the one
+    // the semantic injector races (primaryCont picks #sf-best when Broader is empty) —
+    // becomes DETERMINISTIC for reproduction + regression proof. Default OFF: no param
+    // (or a non-positive value) → sfxMaybeDelayBroader() resolves immediately, zero effect.
+    var SFX_DELAY_BROADER = (function () { try { var v = new URLSearchParams(location.search).get('sfxDelayBroader'); var n = v ? parseInt(v, 10) : 0; return (isFinite(n) && n > 0) ? n : 0; } catch (e) { return 0; } })();
+    function sfxMaybeDelayBroader() { return SFX_DELAY_BROADER ? new Promise(function (r) { setTimeout(r, SFX_DELAY_BROADER); }) : Promise.resolve(); }
     var sel = { q: '', type: new Set(), segment: new Set(), theme: new Set(), source: new Set() };
     // Result groups for the current search (set by run()): single (ungrouped), or
     // Best + Broader. Each is a group object {streams, byDate, seen, excludeIds}.
@@ -1200,7 +1207,7 @@ const docCount = (Math.floor((total || 54000) / 1000) * 1000).toLocaleString('en
 
         if (bestCount > 0) { bestWrap.classList.remove('hidden'); try { await renderGroup(curBest, bestEl, bestMore, token); } catch (e) {} }
         if (pending !== token) return;
-        if (brCount > 0) { broaderWrap.classList.remove('hidden'); try { await renderGroup(curBroader, broaderEl, broaderMore, token); } catch (e) {} }
+        if (brCount > 0) { await sfxMaybeDelayBroader(); if (pending !== token) return; broaderWrap.classList.remove('hidden'); try { await renderGroup(curBroader, broaderEl, broaderMore, token); } catch (e) {} }
         if (pending !== token) return;
 
         if (loadEl) loadEl.classList.add('hidden');
