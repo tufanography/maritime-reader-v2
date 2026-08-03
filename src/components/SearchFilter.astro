@@ -1732,7 +1732,8 @@ const docCount = (Math.floor((total || 54000) / 1000) * 1000).toLocaleString('en
     function armReadyTimeout(){
       if (readyTimer) return;
       var myTok = token;
-      readyTimer = setTimeout(function(){ readyTimer = null; if (myTok !== token) return; apply(true); }, 2500);
+      try { console.debug('[sfx] arm', myTok); } catch (e) {}
+      readyTimer = setTimeout(function(){ readyTimer = null; try { console.debug('[sfx] fire', myTok, token); } catch (e) {} if (myTok !== token) return; apply(true); }, 2500);
     }
     function apply(force, fromObs){
       var had = !!kwObs; if (had) kwObs.disconnect();
@@ -1745,7 +1746,7 @@ const docCount = (Math.floor((total || 54000) / 1000) * 1000).toLocaleString('en
         // when pending===token — so a superseded run can never open this gate.
         var rq = String(window.__sfReady || ''); var h = rq.lastIndexOf('#'); var rqQ = h >= 0 ? rq.slice(0, h) : rq;
         var ready = (rqQ === lastQ);
-        if (!ready && !force){ if (fromObs) armReadyTimeout(); updateCount(); if (had) attachObs(); return; }   // DEFER. Arm the backstop ONLY from a keyword MUTATION (Best rendered but Broader not done) — never from the early embed-triggered apply, which fired the timeout prematurely on every cold-pf search. do NOT clearStatus (keep cards hidden until the real paint).
+        if (!ready && !force){ try { console.debug('[sfx] defer fromObs=' + fromObs + ' ready=' + ready + ' rqQ=' + rqQ.slice(0,20) + ' lastQ=' + String(lastQ).slice(0,20)); } catch (e) {} if (fromObs) armReadyTimeout(); updateCount(); if (had) attachObs(); return; }   // DEFER. Arm the backstop ONLY from a keyword MUTATION (Best rendered but Broader not done) — never from the early embed-triggered apply, which fired the timeout prematurely on every cold-pf search. do NOT clearStatus (keep cards hidden until the real paint).
         var path = ready ? 'matched' : 'timeout';
         // AUTHORITATIVE target from the owner (single→#sf-results, multi→#sf-broader).
         // NEVER #sf-best; NEVER the hidden #sf-results in multi-word mode (silent loss).
