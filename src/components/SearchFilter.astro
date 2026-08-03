@@ -1225,7 +1225,12 @@ const docCount = (Math.floor((total || 54000) / 1000) * 1000).toLocaleString('en
         // signal "ready" over a DOM the newer run is now writing (closes the cross-query
         // race by construction, not by luck). Fires on every exit incl. the error path,
         // so semantic isn't left waiting the full timeout when a render throws.
-        if (pending === token) { try { window.__sfReady = (qEl.value || '').trim() + '#' + sfReadyId; } catch (e2) {} }
+        // Also NOTIFY semantic directly (event-based). The ZERO-RESULT path renders
+        // nothing → no DOM mutation for the observer to catch → without this call a
+        // 0-result search + a fast embed would leave semantic waiting forever (the
+        // backstop timer is now armed ONLY by keyword mutations, which a 0-result run
+        // has none of). This is what keeps the D case alive.
+        if (pending === token) { try { window.__sfReady = (qEl.value || '').trim() + '#' + sfReadyId; if (window.__sfxOnReady) window.__sfxOnReady(); } catch (e2) {} }
       }
     }
 
@@ -1621,6 +1626,7 @@ const docCount = (Math.floor((total || 54000) / 1000) * 1000).toLocaleString('en
       countEl.textContent = tot.toLocaleString('en-US') + ' result' + (tot === 1 ? '' : 's');
     }
     window.__sfxCount = updateCount;                 // keyword run() calls this after setting data-kw
+    window.__sfxOnReady = function(){ apply(); };    // keyword run()'s finally calls this on completion — the event-based ready trigger that covers the 0-result path the mutation observer can't (apply is hoisted)
     function hide(){ wrap.classList.add('hidden'); wrap.innerHTML = ''; updateCount(); }
     // Collect the URLs the keyword results are already showing (both the publisher
     // link on the image/title and the /article/ "Read →" link) so meaning-based
@@ -1687,7 +1693,7 @@ const docCount = (Math.floor((total || 54000) / 1000) * 1000).toLocaleString('en
     function observeKeyword(){
       if (kwObs) return;
       if (!document.querySelector('#sf-best, #sf-broader, #sf-results')) return;
-      kwObs = new MutationObserver(function(){ clearTimeout(reT); reT = setTimeout(apply, 120); });
+      kwObs = new MutationObserver(function(){ clearTimeout(reT); reT = setTimeout(function(){ apply(false, true); }, 120); });
       attachObs();
     }
     // B (unified list, 2026-07): merge the semantic meaning-matches INTO the keyword
@@ -1728,7 +1734,7 @@ const docCount = (Math.floor((total || 54000) / 1000) * 1000).toLocaleString('en
       var myTok = token;
       readyTimer = setTimeout(function(){ readyTimer = null; if (myTok !== token) return; apply(true); }, 2500);
     }
-    function apply(force){
+    function apply(force, fromObs){
       var had = !!kwObs; if (had) kwObs.disconnect();
       try {
         removeInjected();
@@ -1739,7 +1745,7 @@ const docCount = (Math.floor((total || 54000) / 1000) * 1000).toLocaleString('en
         // when pending===token — so a superseded run can never open this gate.
         var rq = String(window.__sfReady || ''); var h = rq.lastIndexOf('#'); var rqQ = h >= 0 ? rq.slice(0, h) : rq;
         var ready = (rqQ === lastQ);
-        if (!ready && !force){ armReadyTimeout(); updateCount(); if (had) attachObs(); return; }   // DEFER — do NOT clearStatus (keep cards hidden until the real paint)
+        if (!ready && !force){ if (fromObs) armReadyTimeout(); updateCount(); if (had) attachObs(); return; }   // DEFER. Arm the backstop ONLY from a keyword MUTATION (Best rendered but Broader not done) — never from the early embed-triggered apply, which fired the timeout prematurely on every cold-pf search. do NOT clearStatus (keep cards hidden until the real paint).
         var path = ready ? 'matched' : 'timeout';
         // AUTHORITATIVE target from the owner (single→#sf-results, multi→#sf-broader).
         // NEVER #sf-best; NEVER the hidden #sf-results in multi-word mode (silent loss).
