@@ -1192,7 +1192,23 @@ const docCount = (Math.floor((total || 54000) / 1000) * 1000).toLocaleString('en
         var bestTierList = bestByDate
           ? [bestTiers.reduce(function (acc, t) { return acc.concat(t); }, [])]
           : bestTiers;
-        curBest = { tiers: bestTierList, byDate: bestByDate, seen: {} };
+        // RELEVANCE order fix (rankMap): the exact-phrase (quoted) Pagefind search returns
+        // every hit at score 1 — no ranking — so Best's relevance order was effectively
+        // RANDOM (a Li-ion page on top of "enclosed space", "7061.PDF" on top of "war risk").
+        // Re-order the SAME membership (tier0 ∪ tier1 — unchanged) by an UNQUOTED scored
+        // search's rank; members it doesn't rank sink to the bottom (stable sort). Newest
+        // ("date") mode is untouched — it keeps its date k-way merge.
+        if (!bestByDate) {
+          var rankRes = await pf.search(raw, { filters: filt });   // unquoted → real relevance scores
+          if (pending !== token) return;
+          var rankMap = {}; for (var ri = 0; ri < rankRes.results.length; ri++) rankMap[rankRes.results[ri].id] = ri;
+          var members = [], seenBest = {};
+          bestTiers.forEach(function (tier) { tier.forEach(function (st) { st.results.forEach(function (r) { if (!seenBest[r.id]) { seenBest[r.id] = 1; members.push(r); } }); }); });
+          members.sort(function (a, b) { var ra = (a.id in rankMap) ? rankMap[a.id] : 1e9, rb = (b.id in rankMap) ? rankMap[b.id] : 1e9; return ra - rb; });   // stable in modern V8: equal (scoreless) keep tier order
+          curBest = { tiers: [[{ results: members, idx: 0 }]], byDate: false, seen: {} };
+        } else {
+          curBest = { tiers: bestTierList, byDate: bestByDate, seen: {} };
+        }
         curBroader = { tiers: [ brSearches.map(function (s) { return { results: s.results, idx: 0 }; }) ], byDate: brByDate, seen: {}, excludeIds: bestIds };
         curSingle = null;
 
