@@ -1760,7 +1760,7 @@ const docCount = (Math.floor((total || 54000) / 1000) * 1000).toLocaleString('en
       try {
         removeInjected();
         var q = ((qEl.value || '').trim());
-        if (q.length < 2 || !lastQv || !CARDS || !window.__sfCard || !lastIds){ updateCount(); if (had) attachObs(); return; }
+        if (q.length < 3 || !lastQv || !CARDS || !window.__sfCard || !lastIds){ updateCount(); if (had) attachObs(); return; }
         // READY GATE (cross-query): act only once the keyword owner signals THIS query's
         // render is complete. __sfReady = "<query>#<runId>", set in run()'s finally ONLY
         // when pending===token — so a superseded run can never open this gate.
@@ -1800,7 +1800,7 @@ const docCount = (Math.floor((total || 54000) / 1000) * 1000).toLocaleString('en
     function run(){
       var q = (qEl.value || '').trim();
       if (readyTimer){ clearTimeout(readyTimer); readyTimer = null; }   // a new query supersedes any pending backstop
-      if (q.length < 2) { lastIds = null; lastQv = null; lastQ = null; clearStatus(); apply(); return; }
+      if (q.length < 3) { lastIds = null; lastQv = null; lastQ = null; clearStatus(); apply(); return; }   // MIRROR the keyword input gate (which skips run() for <3, line ~1328). Semantic must NEVER own a query the keyword side doesn't render — otherwise trimming a settled multi-word search to 2 chars left semantic running a query the DOM didn't represent, and the backstop's force-inject grafted those wrong-query cards onto the stale results (measured 3/3 RED before this line).
       if (window.__sfSort !== 'date') startStatus(); else clearStatus();   // status only in relevance mode
       var my = ++token;
       load().then(function(ok){
