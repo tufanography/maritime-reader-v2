@@ -9,7 +9,8 @@
     "postbuild": "pagefind --site dist --output-subdir _pagefind",
     "build:feed": "astro build",
     "preview": "astro preview",
-    "deploy:r2": "node scripts/deploy-r2.mjs"
+    "deploy:r2": "node scripts/deploy-r2.mjs",
+    "test:golden": "node scripts/golden-search.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.0",
