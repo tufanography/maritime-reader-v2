@@ -498,7 +498,7 @@ const docCount = (Math.floor((total || 54000) / 1000) * 1000).toLocaleString('en
       qClear.classList.toggle('flex', has);
     }
 
-    var pf = null, pfDelta = null, pending = null, debounce = null;
+    var pf = null, pfDelta = null, pending = null, debounce = null, sfReadySeq = 0;
     // TEST SEAM (permanent — do NOT delete). ?sfxDelayBroader=<ms> artificially delays
     // the Broader render so the "Best rendered / Broader still empty" window — the one
     // the semantic injector races (primaryCont picks #sf-best when Broader is empty) —
@@ -1028,6 +1028,10 @@ const docCount = (Math.floor((total || 54000) / 1000) * 1000).toLocaleString('en
 
     async function run() {
       if (!pf) return;
+      // Semantic coordination: mark render IN-FLIGHT (not ready) at the very start, so the
+      // semantic injector waits instead of guessing a half-rendered DOM. Set to a real
+      // "<query>#<runId>" in the finally below, but ONLY if this run still owns the DOM.
+      try { window.__sfReady = null; } catch (e) {}
       writeURL();
       updateChipStates();
       renderActiveChips();
@@ -1053,7 +1057,7 @@ const docCount = (Math.floor((total || 54000) / 1000) * 1000).toLocaleString('en
       clearResults();
       emptyEl.classList.add('hidden');
       if (loadEl) loadEl.classList.remove('hidden');
-      var token = {}; pending = token;
+      var token = {}; pending = token; var sfReadyId = ++sfReadySeq;
 
       // Related-terms dropdown: prefix-match the typed text to a synonym key.
       // Rebuild + AUTO-OPEN only when the matched key changes (so the user's
@@ -1107,6 +1111,7 @@ const docCount = (Math.floor((total || 54000) / 1000) * 1000).toLocaleString('en
       try {
         // ===== QUOTED phrase, BROWSE, or SINGLE-WORD → one ungrouped list (no headings) =====
         if (quoted || !multiWord) {
+          try { window.__sfTarget = resultsEl; } catch (e) {}   // semantic merges into the visible single list
           var single = quoted ? [raw] : singleTerms;
           // relevance is a meaningful choice ONLY when there's EXACTLY ONE search
           // stream (a lone word OR a quoted phrase). length===0 = pure facet/browse
@@ -1154,6 +1159,7 @@ const docCount = (Math.floor((total || 54000) / 1000) * 1000).toLocaleString('en
         }
 
         // ===== GROUPED: Best (exact phrase FIRST, then chips) + Broader (broad − Best) =====
+        try { window.__sfTarget = broaderEl; } catch (e) {}   // semantic → Broader ONLY (never #sf-best). Set early so a mid-render error still has the right target.
         var rawPhrase = (multiWord && !quoted) ? '"' + raw + '"' : null;          // the user's typed phrase
         var secondary = strong.filter(function (t) { return t !== rawPhrase; });  // seed + chip phrases
         // Best now HONORS the global toggle: newest → force date sort; relevance →
@@ -1213,6 +1219,14 @@ const docCount = (Math.floor((total || 54000) / 1000) * 1000).toLocaleString('en
         if (loadEl) loadEl.classList.add('hidden');
         emptyEl.classList.toggle('hidden', total > 0);
       } catch (e) { if (loadEl) loadEl.classList.add('hidden'); }
+      finally {
+        // Tell semantic this query's render is COMPLETE — but ONLY if this run still owns
+        // the DOM. pending===token fails for a superseded run, so an old run can never
+        // signal "ready" over a DOM the newer run is now writing (closes the cross-query
+        // race by construction, not by luck). Fires on every exit incl. the error path,
+        // so semantic isn't left waiting the full timeout when a render throws.
+        if (pending === token) { try { window.__sfReady = (qEl.value || '').trim() + '#' + sfReadyId; } catch (e2) {} }
+      }
     }
 
     // ===== GA4 analytics (search_query · sort_change · load_more) — see the GA4 plan =====
@@ -1568,7 +1582,7 @@ const docCount = (Math.floor((total || 54000) / 1000) * 1000).toLocaleString('en
     var resultsWrap = document.getElementById('sf-results-wrap');
     if (!qEl || !wrap) return;
     var VEC = null, META = null, CARDS = null, loaded = false, loadingP = null, token = 0, debounce;
-    var lastQv = null, idIndex = null;   // current query vector + id→row map (for hybrid re-rank)
+    var lastQv = null, lastQ = null, idIndex = null;   // current query vector + the query it answers + id→row map
     var DOC = { news:'News', press_release:'Press', pi_circular:'P&I', class_notice:'Class', regulation:'Regulation', market_report:'Market', casualty_report:'Casualty', psc_report:'PSC' };
     function esc(s){ return (s == null ? '' : String(s)).replace(/[&<>"]/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
     function load(){
@@ -1643,7 +1657,7 @@ const docCount = (Math.floor((total || 54000) / 1000) * 1000).toLocaleString('en
       return null;
     }
 
-    var lastIds = null, kwObs = null, reT;
+    var lastIds = null, kwObs = null, reT, readyTimer = null;
     // STAGED loading status (coach 2026-08): keyword results show instantly (safety net),
     // but the relevance re-rank waits on the 22MB artifact. Explain the wait ONLY if it
     // actually lasts — a calm spinner (no blink) + a message that escalates by elapsed time,
@@ -1704,18 +1718,33 @@ const docCount = (Math.floor((total || 54000) / 1000) * 1000).toLocaleString('en
       else { var bySim = sc.slice().sort(function(a, b){ return b.sim - a.sim; }); bySim.forEach(function(o, r){ o.sr = r; }); sc.forEach(function(o){ o.score = (1 / (60 + o.i) + 1 / (60 + o.sr)) * o.rec; }); sc.sort(function(a, b){ return b.score - a.score; }); }
       sc.forEach(function(o){ cont.appendChild(o.el); });
     }
-    function apply(){
+    // Backstop for the ready-gate: if the keyword owner never signals ready (a genuine
+    // hang — normally it does even on error, via run()'s finally), inject best-effort
+    // after T into the correct target anyway (T-a: never drop semantic). T=2500ms = the
+    // existing jump-fix reveal cap (startStatus) AND above the measured Best→Broader lag,
+    // so the normal 'matched' path wins and this fires only on a real stall.
+    function armReadyTimeout(){
+      if (readyTimer) return;
+      var myTok = token;
+      readyTimer = setTimeout(function(){ readyTimer = null; if (myTok !== token) return; apply(true); }, 2500);
+    }
+    function apply(force){
       var had = !!kwObs; if (had) kwObs.disconnect();
       try {
         removeInjected();
         var q = ((qEl.value || '').trim());
         if (q.length < 2 || !lastQv || !CARDS || !window.__sfCard || !lastIds){ updateCount(); if (had) attachObs(); return; }
-        // #4 zero-rescue: if keyword found NOTHING, still show semantic matches (the
-        // "war risk premium keyword=0 but semantic 8/8" case) by injecting into the
-        // (empty) #sf-results and un-hiding the wrap + hiding the "No results" state.
-        var cont = primaryCont(), rescue = false;
-        if (!cont){ cont = document.getElementById('sf-results'); rescue = true; }
-        if (!cont){ updateCount(); if (had) attachObs(); return; }
+        // READY GATE (cross-query): act only once the keyword owner signals THIS query's
+        // render is complete. __sfReady = "<query>#<runId>", set in run()'s finally ONLY
+        // when pending===token — so a superseded run can never open this gate.
+        var rq = String(window.__sfReady || ''); var h = rq.lastIndexOf('#'); var rqQ = h >= 0 ? rq.slice(0, h) : rq;
+        var ready = (rqQ === lastQ);
+        if (!ready && !force){ armReadyTimeout(); updateCount(); if (had) attachObs(); return; }   // DEFER — do NOT clearStatus (keep cards hidden until the real paint)
+        var path = ready ? 'matched' : 'timeout';
+        // AUTHORITATIVE target from the owner (single→#sf-results, multi→#sf-broader).
+        // NEVER #sf-best; NEVER the hidden #sf-results in multi-word mode (silent loss).
+        var cont = window.__sfTarget || null;
+        if (!cont){ window.__sfxLastPath = 'no-target'; try { console.debug('[sfx] no-target', lastQ); } catch (e0) {} updateCount(); if (had) attachObs(); return; }
         var kw = keywordIds(), cand = [], mx = 0, i, id, c, sm;
         for (i = 0; i < lastIds.length; i++){ id = lastIds[i]; if (kw[id]) continue; c = CARDS[id]; if (!c) continue; sm = semSim(id); if (sm > mx) mx = sm; cand.push({ id: id, c: c, sim: sm }); }
         var floor = Math.max(90, 0.5 * mx);                         // #2: only genuinely-close meaning matches
@@ -1727,17 +1756,24 @@ const docCount = (Math.floor((total || 54000) / 1000) * 1000).toLocaleString('en
         cand.forEach(function(o){ var detail = '/article/' + o.id + '/'; var d = { url: detail, meta: { title: o.c.t, source: o.c.s, type: o.c.dt, date: o.c.d, link: o.c.u || detail, image: o.c.i || null } }; var f = ''; try { f = mk(d, null); } catch (e) {} if (f) html += f.replace('<article ', '<article data-sfx="1" '); });
         if (html){
           cont.insertAdjacentHTML('beforeend', html);
-          if (rescue){ if (resultsWrap) resultsWrap.classList.remove('hidden'); var emptyEl = document.getElementById('sf-empty'); if (emptyEl) emptyEl.classList.add('hidden'); }
+          // un-hide the target's own wrapper (semantic-only Broader case: brCount=0) and
+          // drop the "No results" state — there ARE results now. Never touches #sf-best.
+          if (cont.id === 'sf-broader'){ var bw = document.getElementById('sf-broader-wrap'); if (bw) bw.classList.remove('hidden'); }
+          if (resultsWrap) resultsWrap.classList.remove('hidden');
+          var emptyEl = document.getElementById('sf-empty'); if (emptyEl) emptyEl.classList.add('hidden');
         }
         reorder(cont);
         updateCount();
+        window.__sfxLastPath = path; try { console.debug('[sfx]', path, lastQ); } catch (e1) {}
+        if (readyTimer){ clearTimeout(readyTimer); readyTimer = null; }
         clearStatus();   // relevance re-rank has painted → drop the loading status
       } catch (e) {}
       if (had) attachObs();
     }
     function run(){
       var q = (qEl.value || '').trim();
-      if (q.length < 2) { lastIds = null; lastQv = null; clearStatus(); apply(); return; }
+      if (readyTimer){ clearTimeout(readyTimer); readyTimer = null; }   // a new query supersedes any pending backstop
+      if (q.length < 2) { lastIds = null; lastQv = null; lastQ = null; clearStatus(); apply(); return; }
       if (window.__sfSort !== 'date') startStatus(); else clearStatus();   // status only in relevance mode
       var my = ++token;
       load().then(function(ok){
@@ -1746,6 +1782,7 @@ const docCount = (Math.floor((total || 54000) / 1000) * 1000).toLocaleString('en
           if (my !== token || !qv || !qv.length) return;
           lastQv = qv;
           lastIds = topK(qv, 24);
+          lastQ = q;                 // the query THIS vector answers — the ready-gate key
           observeKeyword();
           apply();
         });
