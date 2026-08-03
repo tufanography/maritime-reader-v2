@@ -1724,15 +1724,20 @@ const docCount = (Math.floor((total || 54000) / 1000) * 1000).toLocaleString('en
       else { var bySim = sc.slice().sort(function(a, b){ return b.sim - a.sim; }); bySim.forEach(function(o, r){ o.sr = r; }); sc.forEach(function(o){ o.score = (1 / (60 + o.i) + 1 / (60 + o.sr)) * o.rec; }); sc.sort(function(a, b){ return b.score - a.score; }); }
       sc.forEach(function(o){ cont.appendChild(o.el); });
     }
-    // Backstop for the ready-gate: if the keyword owner never signals ready (a genuine
-    // hang — normally it does even on error, via run()'s finally), inject best-effort
-    // after T into the correct target anyway (T-a: never drop semantic). T=2500ms = the
-    // existing jump-fix reveal cap (startStatus) AND above the measured Best→Broader lag,
-    // so the normal 'matched' path wins and this fires only on a real stall.
+    // Last-resort safety net: if the keyword owner never signals ready — the "finally
+    // never runs" case we have NOT proven impossible (nowarm showed 4/5 runs that never
+    // rendered in 17s; count=11/27/305 with Best=0) — inject best-effort into the correct
+    // target after T (T-a: NEVER drop semantic; when keyword found nothing, this is the
+    // ONLY thing on screen, so it's the most valuable moment to show it). T=10000ms: far
+    // above any normal Best→Broader gap (cold Broader render measured ~3500ms, i.e. ~3500ms
+    // even with NO seam), so it NEVER fires on a normal search (zero flash) and trips only
+    // on a genuine stall. Anchored to Best-presence (see the defer); a real-world fire is
+    // visible via __sfxLastPath='timeout'. Do not lower without re-measuring the Broader
+    // render lag — that is what a premature value collides with.
     function armReadyTimeout(){
       if (readyTimer) return;
       var myTok = token;
-      readyTimer = setTimeout(function(){ readyTimer = null; if (myTok !== token) return; apply(true); }, 2500);
+      readyTimer = setTimeout(function(){ readyTimer = null; if (myTok !== token) return; apply(true); }, 10000);
     }
     function apply(force){
       var had = !!kwObs; if (had) kwObs.disconnect();
@@ -1745,7 +1750,7 @@ const docCount = (Math.floor((total || 54000) / 1000) * 1000).toLocaleString('en
         // when pending===token — so a superseded run can never open this gate.
         var rq = String(window.__sfReady || ''); var h = rq.lastIndexOf('#'); var rqQ = h >= 0 ? rq.slice(0, h) : rq;
         var ready = (rqQ === lastQ);
-        if (!ready && !force){ if (document.querySelector('#sf-best article.group:not([data-sfx])')) armReadyTimeout(); updateCount(); if (had) attachObs(); return; }   // DEFER. Arm the backstop ONCE Best has rendered but we're still not ready (Broader lagging) — anchored to Best-presence in the DOM, robust to embed/observer timing (the observer attaches only AFTER embed, which can land after Best). Never arm before Best exists (that's normal cold-pf load, not a stall). do NOT clearStatus (keep cards hidden until the real paint). Arm the backstop ONLY from a keyword MUTATION (Best rendered but Broader not done) — never from the early embed-triggered apply, which fired the timeout prematurely on every cold-pf search. do NOT clearStatus (keep cards hidden until the real paint).
+        if (!ready && !force){ if (document.querySelector('#sf-best article.group:not([data-sfx])')) armReadyTimeout(); updateCount(); if (had) attachObs(); return; }   // DEFER. Arm the backstop ONCE Best has rendered but we're still not ready (Broader lagging) — anchored to Best-presence in the DOM, robust to embed/observer timing (the observer attaches only AFTER embed, which can land after Best). Never before Best exists (that's normal cold-pf load, not a stall). do NOT clearStatus (keep cards hidden until the real paint).
         var path = ready ? 'matched' : 'timeout';
         // AUTHORITATIVE target from the owner (single→#sf-results, multi→#sf-broader).
         // NEVER #sf-best; NEVER the hidden #sf-results in multi-word mode (silent loss).
