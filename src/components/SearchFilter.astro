@@ -524,6 +524,15 @@ const docCount = (Math.floor((total || 54000) / 1000) * 1000).toLocaleString('en
     // finds them memoized), so the marginal added latency is well under that.
     var RECENCY_TOP = (function () { try { var v = new URLSearchParams(location.search).get('sfxRecencyTop'); var n = v ? parseInt(v, 10) : NaN; return (isFinite(n) && n >= 0) ? n : 12; } catch (e) { return 12; } })();
     var RECENCY_TIE = (function () { try { var v = new URLSearchParams(location.search).get('sfxRecencyTie'); var n = v ? parseFloat(v) : NaN; return (isFinite(n) && n >= 0) ? n : 0.012; } catch (e) { return 0.012; } })();
+    // BEST MEMBERSHIP CAP (relevance mode). Best is the top BEST_CAP of the unquoted
+    // all-words relevance ranking — NOT only exact-phrase hits. Measurement (steel coil)
+    // showed scattered-word guidance ("Steel Pre-Shipment Surveys", "Pre-loading survey
+    // of steel cargo") outranks tangential exact-bigram news (ship-delivery items), yet
+    // the old exact-phrase gate demoted the guidance to Broader and kept the news in Best.
+    // Ranking is unchanged (same relevance order + recency), so #1 is identical — only
+    // which items qualify for the box changes. Broader = everything below the cap.
+    // Overridable for tuning: ?sfxBestCap=<int>.
+    var BEST_CAP = (function () { try { var v = new URLSearchParams(location.search).get('sfxBestCap'); var n = v ? parseInt(v, 10) : NaN; return (isFinite(n) && n > 0) ? n : 20; } catch (e) { return 20; } })();
     var sel = { q: '', type: new Set(), segment: new Set(), theme: new Set(), source: new Set() };
     // Result groups for the current search (set by run()): single (ungrouped), or
     // Best + Broader. Each is a group object {streams, byDate, seen, excludeIds}.
@@ -1257,11 +1266,17 @@ const docCount = (Math.floor((total || 54000) / 1000) * 1000).toLocaleString('en
           var rankRes = await pf.search(raw, { filters: filt });   // unquoted → real relevance scores
           if (pending !== token) return;
           var rankMap = {}, scoreMap = {}; for (var ri = 0; ri < rankRes.results.length; ri++) { rankMap[rankRes.results[ri].id] = ri; scoreMap[rankRes.results[ri].id] = rankRes.results[ri].score; }
-          var members = [], seenBest = {};
-          bestTiers.forEach(function (tier) { tier.forEach(function (st) { st.results.forEach(function (r) { if (!seenBest[r.id]) { seenBest[r.id] = 1; members.push(r); } }); }); });
-          members.sort(function (a, b) { var ra = (a.id in rankMap) ? rankMap[a.id] : 1e9, rb = (b.id in rankMap) ? rankMap[b.id] : 1e9; return ra - rb; });   // stable in modern V8: equal (scoreless) keep tier order
+          // MEMBERSHIP (fix-2): Best = top BEST_CAP of the unquoted all-words relevance,
+          // replacing the exact-phrase gate. This lets strong scattered-word docs (steel
+          // guidance) into Best and drops tangential exact-bigram items below the cap into
+          // Broader. The exact-phrase/chip searches above still ran (addActive counts + the
+          // Newest-mode branch); they just no longer decide Best membership in relevance mode.
+          var members = rankRes.results.slice(0, BEST_CAP);
           members = await recencyReorder(members, function (r) { return scoreMap[r.id]; });   // light recency tie-breaker: newest-first within near-equal-score bands
           if (pending !== token) return;
+          // Rebuild bestIds from the NEW membership so Broader excludes exactly these and
+          // bestCount is accurate (was populated from the exact-phrase/chip tiers above).
+          bestIds = {}; for (var mi = 0; mi < members.length; mi++) bestIds[members[mi].id] = 1;
           curBest = { tiers: [[{ results: members, idx: 0 }]], byDate: false, seen: {} };
         } else {
           curBest = { tiers: bestTierList, byDate: bestByDate, seen: {} };
