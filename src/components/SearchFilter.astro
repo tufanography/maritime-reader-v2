@@ -506,6 +506,24 @@ const docCount = (Math.floor((total || 54000) / 1000) * 1000).toLocaleString('en
     // (or a non-positive value) → sfxMaybeDelayBroader() resolves immediately, zero effect.
     var SFX_DELAY_BROADER = (function () { try { var v = new URLSearchParams(location.search).get('sfxDelayBroader'); var n = v ? parseInt(v, 10) : 0; return (isFinite(n) && n > 0) ? n : 0; } catch (e) { return 0; } })();
     function sfxMaybeDelayBroader() { return SFX_DELAY_BROADER ? new Promise(function (r) { setTimeout(r, SFX_DELAY_BROADER); }) : Promise.resolve(); }
+    // RECENCY TIE-BREAKER (relevance mode only). Pagefind ranks purely by lexical
+    // score, so when several hits are near-equal relevance — a source's yearly
+    // "War Risk Notice of Cancellation" series (all same title), or two docs both
+    // titled "steel coil" — the OLDEST can pin the top while today's item sinks.
+    // recencyReorder() re-sorts ONLY the top RECENCY_TOP members, and ONLY WITHIN a
+    // band of near-equal score (within RECENCY_TIE relative), newest-first. It never
+    // crosses score bands, so a genuine relevance gap is preserved. Two calibration
+    // guardrails set the 0.012 default: "enclosed space" (its 224/166-score title
+    // matches stay pinned; only the flat ~101 band below them date-orders) and golden
+    // G2 "speed and consumption" (its top hit leads #2 by 1.76%, so a <1.76% tie keeps
+    // it #1 — 0.05 wrongly banded it and let an older #2 win). 0.012 sits below that
+    // 1.76% gap yet above war-risk's ~0% top tie, so current news still surfaces there.
+    // Overridable per-request for tuning: ?sfxRecencyTie=<float> ?sfxRecencyTop=<int>.
+    // TOP=12 covers the visible first page of Best; the top-12 data() resolve measured
+    // ~110ms cold and LARGELY OVERLAPS render (which fetches page-1 fragments anyway, then
+    // finds them memoized), so the marginal added latency is well under that.
+    var RECENCY_TOP = (function () { try { var v = new URLSearchParams(location.search).get('sfxRecencyTop'); var n = v ? parseInt(v, 10) : NaN; return (isFinite(n) && n >= 0) ? n : 12; } catch (e) { return 12; } })();
+    var RECENCY_TIE = (function () { try { var v = new URLSearchParams(location.search).get('sfxRecencyTie'); var n = v ? parseFloat(v) : NaN; return (isFinite(n) && n >= 0) ? n : 0.012; } catch (e) { return 0.012; } })();
     var sel = { q: '', type: new Set(), segment: new Set(), theme: new Set(), source: new Set() };
     // Result groups for the current search (set by run()): single (ungrouped), or
     // Best + Broader. Each is a group object {streams, byDate, seen, excludeIds}.
@@ -896,6 +914,39 @@ const docCount = (Math.floor((total || 54000) / 1000) * 1000).toLocaleString('en
       var t = d ? new Date(d).getTime() : NaN;
       return isNaN(t) ? -Infinity : t; // undated sinks to the bottom
     }
+    // Light recency tie-breaker over a relevance-ordered result list. Resolves the
+    // top RECENCY_TOP items' data() (dates aren't otherwise known until render),
+    // groups them into score bands (a new band starts when score drops > RECENCY_TIE
+    // relative below the band's top), and within each band sorts newest-first. Items
+    // with no score sink in original order. The tail past RECENCY_TOP is untouched.
+    // scoreOf(r) maps a result to its Pagefind relevance score. Records the resolve
+    // cost in window.__sfxRecencyCostMs. Returns a NEW array (input left intact).
+    async function recencyReorder(results, scoreOf) {
+      if (!RECENCY_TOP || RECENCY_TIE <= 0 || !results || results.length < 2) return results;
+      var head = results.slice(0, RECENCY_TOP), tail = results.slice(RECENCY_TOP);
+      var t0 = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+      await Promise.all(head.map(function (r) {
+        return (r.__data || typeof r.data !== 'function') ? null : withTimeout(r.data().then(function (d) { r.__data = d; }), 8000);
+      }).filter(Boolean));
+      try { window.__sfxRecencyCostMs = ((typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now()) - t0; } catch (e) {}
+      var band = 0, bandTop = null, nValid = 0;
+      for (var i = 0; i < head.length; i++) {
+        var sc = scoreOf(head[i]);
+        if (sc == null || isNaN(sc)) { head[i].__rb = 1e6 + i; continue; }   // no score → sink, keep order
+        nValid++;
+        if (bandTop === null) { bandTop = sc; head[i].__rb = band; }
+        else { if (sc < bandTop * (1 - RECENCY_TIE)) { band++; bandTop = sc; } head[i].__rb = band; }
+      }
+      if (nValid < 2) return results;                          // nothing to separate → leave as-is
+      var idx = {}; for (var j = 0; j < head.length; j++) idx[head[j].id] = j;   // original order = stable fallback
+      var arr = head.slice();
+      arr.sort(function (a, b) {
+        if (a.__rb !== b.__rb) return a.__rb - b.__rb;         // higher relevance band first
+        var d = dateOf(b) - dateOf(a); if (d !== 0) return d;  // within band: newest first
+        return idx[a.id] - idx[b.id];
+      });
+      return arr.concat(tail);
+    }
     // A "group" = { tiers:[ [{results,idx}], ... ], byDate, seen:{}, excludeIds:{} }.
     // tiers are consumed IN ORDER: a tier is fully drained before the next begins
     // (so Best = [ [raw exact phrase], [chip phrases] ] surfaces the exact query first).
@@ -1128,6 +1179,10 @@ const docCount = (Math.floor((total || 54000) / 1000) * 1000).toLocaleString('en
           sres.forEach(function (s, i) { addActive(sterms[i], s.results); });
           updateChipCounts(); renderActiveTerms();
           var sStreams = sres.map(function (s) { return { results: s.results, idx: 0 }; });
+          // Single relevance list (one word / quoted phrase) gets the same light recency
+          // tie-breaker as Best — a lexically-strong OLD hit otherwise pins the top over
+          // today's item ("Hormuz" newest was weeks old with a 6-day item buried).
+          if (useRel && single.length === 1 && sStreams[0]) { sStreams[0].results = await recencyReorder(sStreams[0].results, function (r) { return r.score; }); if (pending !== token) return; }
           // B (2026-06-25): on date-sorted runs, add the delta-only index as extra streams
           // so the k-way date merge surfaces fresh delta articles above base's (weekly) newest
           // — fixes the stale SOURCE-filtered browse. Deduped by url in pullGroup. Count
@@ -1201,10 +1256,12 @@ const docCount = (Math.floor((total || 54000) / 1000) * 1000).toLocaleString('en
         if (!bestByDate) {
           var rankRes = await pf.search(raw, { filters: filt });   // unquoted → real relevance scores
           if (pending !== token) return;
-          var rankMap = {}; for (var ri = 0; ri < rankRes.results.length; ri++) rankMap[rankRes.results[ri].id] = ri;
+          var rankMap = {}, scoreMap = {}; for (var ri = 0; ri < rankRes.results.length; ri++) { rankMap[rankRes.results[ri].id] = ri; scoreMap[rankRes.results[ri].id] = rankRes.results[ri].score; }
           var members = [], seenBest = {};
           bestTiers.forEach(function (tier) { tier.forEach(function (st) { st.results.forEach(function (r) { if (!seenBest[r.id]) { seenBest[r.id] = 1; members.push(r); } }); }); });
           members.sort(function (a, b) { var ra = (a.id in rankMap) ? rankMap[a.id] : 1e9, rb = (b.id in rankMap) ? rankMap[b.id] : 1e9; return ra - rb; });   // stable in modern V8: equal (scoreless) keep tier order
+          members = await recencyReorder(members, function (r) { return scoreMap[r.id]; });   // light recency tie-breaker: newest-first within near-equal-score bands
+          if (pending !== token) return;
           curBest = { tiers: [[{ results: members, idx: 0 }]], byDate: false, seen: {} };
         } else {
           curBest = { tiers: bestTierList, byDate: bestByDate, seen: {} };
