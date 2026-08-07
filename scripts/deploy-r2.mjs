@@ -202,22 +202,49 @@ if (DRY) {
   process.exit(0);
 }
 
-let done = 0, failed = 0;
+let done = 0;
 let idx = 0;
+const failedKeys = []; // keys that exhausted put()'s retries in the PARALLEL pass
 async function worker() {
   while (idx < changed.length) {
     const i = idx++; const c = changed[i];
     const ct = CT[path.extname(c.key).toLowerCase()] || 'application/octet-stream';
     const okPut = await put(c.key, c.buf, ct);
     if (okPut) { manifest[c.key] = c.h; if (++done % 2000 === 0) console.log(`  uploaded ${done}/${changed.length}`); }
-    else failed++;
+    else failedKeys.push({ ...c, ct });
   }
 }
 await Promise.all(Array.from({ length: CONCURRENCY }, worker));
 
-// Persist manifest (only successfully-uploaded keys were updated above).
-if (!failed) await put(MANIFEST_KEY, JSON.stringify(manifest), CT['.json']);
-else { await put(MANIFEST_KEY, JSON.stringify(manifest), CT['.json']); console.error(`⚠️ ${failed} uploads failed — those keys stay out of the manifest so the next run retries them`); }
+// SERIAL RECOVERY PASS. A file occasionally burns all of put()'s retries under
+// heavy PARALLEL load: R2 throttles it and, because 24 workers keep the pressure
+// up, every one of the 5 back-off tries lands inside the same throttle window.
+// That is transient noise, not a real fault (the next run re-uploads it anyway,
+// since a failed key never enters the manifest). So before signalling failure,
+// re-try the stragglers ONE AT A TIME — no parallel pressure, so a transient
+// throttle almost always clears. Only files that STILL fail after this serial
+// pass are a genuine/persistent fault, and THAT is what keeps exit(1) meaningful.
+let permanentFail = 0;
+if (failedKeys.length) {
+  console.log(`parallel pass: ${failedKeys.length} failed → serial retry pass (no parallelism)`);
+  let recovered = 0;
+  for (const c of failedKeys) {
+    // Only 2 tries here (not put()'s default 5). The serial pass exists to remove
+    // PARALLEL pressure, not to deep-backoff. If a fault is systemic (creds/bucket
+    // gone), hundreds of keys queue serially — at 5 tries × ~8s each that blows the
+    // GitHub job timeout and trades a "failed" email for a "timeout" one. Two tries
+    // surrenders fast so a real fault reaches exit(1) instead of hanging.
+    const okPut = await put(c.key, c.buf, c.ct, 2);
+    if (okPut) { manifest[c.key] = c.h; done++; recovered++; }
+    else permanentFail++;
+  }
+  console.log(`serial pass: ${recovered} recovered, ${permanentFail} permanently failed`);
+}
 
-console.log(`DONE: uploaded ${done}, failed ${failed}, skipped ${files.length - changed.length}, in ${((Date.now()-t0)/1000).toFixed(1)}s`);
-process.exit(failed > 0 ? 1 : 0);
+// Persist manifest (only successfully-uploaded keys were updated above; keys that
+// failed BOTH passes were never written, so the next run retries them).
+if (!permanentFail) await put(MANIFEST_KEY, JSON.stringify(manifest), CT['.json']);
+else { await put(MANIFEST_KEY, JSON.stringify(manifest), CT['.json']); console.error(`⚠️ ${permanentFail} uploads failed even after the serial pass — those keys stay out of the manifest so the next run retries them`); }
+
+console.log(`DONE: uploaded ${done}, failed ${permanentFail}, skipped ${files.length - changed.length}, in ${((Date.now()-t0)/1000).toFixed(1)}s`);
+process.exit(permanentFail > 0 ? 1 : 0);
