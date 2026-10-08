@@ -40,7 +40,14 @@ jobs:
           # index and the sitemap (see SupabaseArticleRepository.ts truncation guard).
           # STRICT=1 → this build treats hitting the ceiling as a hard error (base
           # build must cover the whole archive; delta build leaves STRICT unset).
-          ARTICLE_PAGE_LIMIT: '95000'
+          # 95000→500000 on 2026-10-08: the original file-count reason is GONE (v2
+          # serves from R2, not CF Pages' 20k-file deploy cap), so this is no longer
+          # a real limit — just an archive cap nobody should have to hand-bump. The
+          # keyset read stops at the true archive size anyway (short page ⇒ end), so a
+          # high ceiling adds no work; it only stops silent truncation + STRICT false-
+          # fails. Visible was 94,294 / 95000 (99.3%) when this was raised.
+          # ponytail: fixed number, replace with a >20%-change-vs-archive guard later.
+          ARTICLE_PAGE_LIMIT: '500000'
           ARTICLE_LIMIT_STRICT: '1'
           PUBLIC_SUPABASE_URL: ${{ secrets.PUBLIC_SUPABASE_URL }}
           PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.PUBLIC_SUPABASE_ANON_KEY }}
